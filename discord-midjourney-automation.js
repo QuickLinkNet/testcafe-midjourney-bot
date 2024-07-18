@@ -11,10 +11,7 @@ const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
 const prompts = [`autohausen${Date.now()}`];
 const maxConcurrentRenderings = 1;
-const upscaleWaitTime = 5000;
 const checkInterval = 2500;
-const renderTimeout = 10 * 60 * 1000;
-const maxInitialContentRetries = 50;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
 const loginPasswordSelector = '#uid_9';
