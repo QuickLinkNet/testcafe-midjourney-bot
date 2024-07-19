@@ -1,5 +1,7 @@
 import { ClientFunction, Selector } from 'testcafe';
 import dotenv from 'dotenv';
+import * as path from "path";
+import * as fs from "fs";
 
 // Lade die Umgebungsvariablen
 dotenv.config();
@@ -9,9 +11,9 @@ fixture `Discord Midjourney Automation`
 
 const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
-const prompts = [`autohausen${Date.now()}`];
 const maxConcurrentRenderings = 1;
 const checkInterval = 2500;
+const repetitions = 2;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
 const loginPasswordSelector = '#uid_9';
@@ -20,6 +22,21 @@ const textInputSelector = Selector('div').withAttribute('role', 'textbox');
 const dropdownOptionSelector = Selector('div').withAttribute('role', 'option');
 
 let messageIDs = {};
+
+// Funktion zum Lesen und Validieren der Prompts
+const readPromptsFromFile = (filePath) => {
+    const absolutePath = path.resolve(filePath);
+    const data = fs.readFileSync(absolutePath, 'utf8');
+    return JSON.parse(data);
+};
+
+const validatePrompts = (prompts) => {
+    return prompts.every(prompt => typeof prompt.prompt === 'string' && prompt.prompt.length > 0);
+};
+
+const generateSeed = () => {
+    return Math.floor(1000000000 + Math.random() * 9000000000);
+};
 
 async function slowTypeText(t, selector, text, delay = 50) {
     for (const char of text) {
@@ -175,21 +192,35 @@ test('Automate Midjourney Prompts', async t => {
 
     await t.navigateTo('https://discord.com/channels/1084714846290984990/1084714846290984993');
 
+    const promptsFilePath = './prompts.json';
+    const prompts = readPromptsFromFile(promptsFilePath);
+
+    if (!validatePrompts(prompts)) {
+        throw new Error('Invalid prompts data');
+    }
+
     let currentRenderings = 0;
 
+    /**
+     * @desc Iterate over prompts
+     */
     for (let i = 0; i < prompts.length; i++) {
         const prompt = prompts[i];
+        for (let j = 0; j < repetitions; j++) {
+            while (currentRenderings >= maxConcurrentRenderings) {
+                await t.wait(checkInterval);
+                currentRenderings = await t.eval(() => window.currentRenderings);
+            }
 
-        while (currentRenderings >= maxConcurrentRenderings) {
-            await t.wait(checkInterval);
-            currentRenderings = await t.eval(() => window.currentRenderings);
+            currentRenderings++;
+
+            const seed = generateSeed();
+            const promptWithSeed = `${prompt.prompt} --seed ${seed}`;
+
+            await executePrompt(t, promptWithSeed);
+
+            currentRenderings--;
         }
-
-        currentRenderings++;
-
-        await executePrompt(t, prompt);
-
-        currentRenderings--;
     }
 
     await log('Aktueller Status der Prompts und deren Container-IDs:');
