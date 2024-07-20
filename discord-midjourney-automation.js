@@ -12,8 +12,8 @@ fixture `Discord Midjourney Automation`
 const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
 const maxConcurrentRenderings = 1;
-const checkInterval = 2500;
-const repetitions = 2;
+const checkInterval = 2000;
+const repetitions = 5;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
 const loginPasswordSelector = '#uid_9';
@@ -43,6 +43,10 @@ async function slowTypeText(t, selector, text, delay = 50) {
         await t.typeText(selector, char, { speed: 1.0 });
         await t.wait(delay);
     }
+}
+
+async function pasteText(t, selector, text) {
+    await t.typeText(selector, text, { paste: true });
 }
 
 const universalLog = ClientFunction((message) => {
@@ -87,7 +91,7 @@ const getButtonsFromMessage = ClientFunction((messageID) => {
 async function executePrompt(t, prompt) {
     await slowTypeText(t, textInputSelector, '/im', 200);
     await t.click(dropdownOptionSelector.nth(0));
-    await slowTypeText(t, textInputSelector, prompt, 200);
+    await pasteText(t, textInputSelector, prompt);
     await t.pressKey('enter');
     await t.wait(5000);
 
