@@ -95,48 +95,24 @@ async function executePrompt(t, prompt) {
     await t.pressKey('enter');
     await t.wait(5000);
 
-    const message = await findMessageByPrompt(prompt);
-
-    if(!message) {
-        throw new Error(`No message found with prompt: ${prompt}`)
-    }
-
-    await log(`Message found. ID: ${message.id}`);
-
-
-    let waitingContainerFound = false;
-    let renderContainerFound = false;
-    let finishedContainerFound = false;
-
     while (1 !== 2) {
         await log('Checking message container');
 
-        await log(`waiting: ${waitingContainerFound} | render: ${renderContainerFound} | finished: ${finishedContainerFound}`);
-
         const message = await findMessageByPrompt(prompt);
 
-        if (message.content.includes('Waiting to start')) {
-            if(!waitingContainerFound) {
-                await log(`Found waiting message for prompt: ${prompt}`)
-                waitingContainerFound = true;
-            } else {
-                await log(`Still waiting for prompt: ${prompt}`)
-            }
-        } else if(waitingContainerFound && message.content.includes('%')) {
-            if(!renderContainerFound) {
-                await log(`Found render message for prompt: ${prompt}`)
-                renderContainerFound = true;
-            } else {
-                const renderProgress = await ClientFunction((message) => {
-                    const match = message.content ? message.content.match(/(\d+)%/) : null;
-                    return match ? match[1] : null;
-                })(message);
+        console.log(message);
 
-                await log(`Render by ${renderProgress}% for prompt: ${prompt}`)
-            }
-        } else if (waitingContainerFound && renderContainerFound) {
+        if (message.content.includes('Waiting')) {
+            await log(`Waiting container found: ${prompt}`)
+        } else if (message.content.includes('%')) {
+            const renderProgress = await ClientFunction((message) => {
+                const match = message.content ? message.content.match(/(\d+)%/) : null;
+                return match ? match[1] : null;
+            })(message);
+
+            await log(`Render by ${renderProgress}% for prompt: ${prompt}`)
+        } else {
             const buttonTexts = await getButtonsFromMessage(message.id);
-            const finishedMessage = await Selector(`#${message.id}`)
 
             if (buttonTexts.length === 4) {
                 for (let text of buttonTexts) {
@@ -178,7 +154,6 @@ async function executePrompt(t, prompt) {
             } else {
                 await log(`Upscale buttons not found for prompt: ${prompt}`);
             }
-
             await log(`Here we are...`);
         }
 
@@ -205,25 +180,35 @@ test('Automate Midjourney Prompts', async t => {
 
     let currentRenderings = 0;
 
+    // Create a global variable to track current renderings
+    await ClientFunction(() => {
+        window.currentRenderings = 0;
+    })();
+
     /**
      * @desc Iterate over prompts
      */
     for (let i = 0; i < prompts.length; i++) {
         const prompt = prompts[i];
         for (let j = 0; j < repetitions; j++) {
-            while (currentRenderings >= maxConcurrentRenderings) {
+            while (await ClientFunction(() => window.currentRenderings)() >= maxConcurrentRenderings) {
                 await t.wait(checkInterval);
-                currentRenderings = await t.eval(() => window.currentRenderings);
             }
 
-            currentRenderings++;
+            // Increment current renderings
+            await ClientFunction(() => {
+                window.currentRenderings++;
+            })();
 
             const seed = generateSeed();
             const promptWithSeed = `${prompt.prompt} --seed ${seed}`;
 
             await executePrompt(t, promptWithSeed);
 
-            currentRenderings--;
+            // Decrement current renderings
+            await ClientFunction(() => {
+                window.currentRenderings--;
+            })();
         }
     }
 
