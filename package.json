@@ -11,6 +11,6 @@
   "license": "ISC",
   "dependencies": {
     "dotenv": "^16.4.5",
-    "testcafe": "^3.6.1"
+    "testcafe": "^3.6.2"
   }
 }

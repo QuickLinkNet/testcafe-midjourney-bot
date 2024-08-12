@@ -13,7 +13,7 @@ const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
 const maxConcurrentRenderings = 1;
 const checkInterval = 2000;
-const repetitions = 5;
+const repetitions = 10;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
 const loginPasswordSelector = '#uid_9';
@@ -46,7 +46,7 @@ async function slowTypeText(t, selector, text, delay = 50) {
 }
 
 async function pasteText(t, selector, text) {
-    await t.typeText(selector, text, { paste: true });
+    await t.typeText(selector, text + ' --ar 8:3', { paste: true });
 }
 
 const universalLog = ClientFunction((message) => {
@@ -91,16 +91,16 @@ const getButtonsFromMessage = ClientFunction((messageID) => {
 async function executePrompt(t, prompt) {
     await slowTypeText(t, textInputSelector, '/im', 200);
     await t.click(dropdownOptionSelector.nth(0));
+    // await slowTypeText(t, textInputSelector, prompt);
     await pasteText(t, textInputSelector, prompt);
     await t.pressKey('enter');
-    await t.wait(5000);
+
+    await t.wait(15000);
 
     while (1 !== 2) {
         await log('Checking message container');
 
         const message = await findMessageByPrompt(prompt);
-
-        console.log(message);
 
         if (message.content.includes('Waiting')) {
             await log(`Waiting container found: ${prompt}`)
@@ -209,6 +209,13 @@ test('Automate Midjourney Prompts', async t => {
             await ClientFunction(() => {
                 window.currentRenderings--;
             })();
+
+            // Log the progress after each prompt execution
+            const completed = i * repetitions + j + 1;
+            const total = prompts.length * repetitions;
+            const remaining = total - completed;
+
+            await log(`Completed prompts: ${completed} of ${total}. Remaining: ${remaining}.`);
         }
     }
 
