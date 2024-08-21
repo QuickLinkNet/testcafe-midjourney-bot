@@ -1,9 +1,6 @@
 import { ClientFunction, Selector } from 'testcafe';
 import dotenv from 'dotenv';
-import * as path from "path";
-import * as fs from "fs";
 
-// Lade die Umgebungsvariablen
 dotenv.config();
 
 fixture `Discord Midjourney Automation`
@@ -11,9 +8,10 @@ fixture `Discord Midjourney Automation`
 
 const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
+const apiBase = process.env.API;
+
 const maxConcurrentRenderings = 1;
 const checkInterval = 2000;
-const repetitions = 10;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
 const loginPasswordSelector = '#uid_9';
@@ -23,11 +21,12 @@ const dropdownOptionSelector = Selector('div').withAttribute('role', 'option');
 
 let messageIDs = {};
 
-// Funktion zum Lesen und Validieren der Prompts
-const readPromptsFromFile = (filePath) => {
-    const absolutePath = path.resolve(filePath);
-    const data = fs.readFileSync(absolutePath, 'utf8');
-    return JSON.parse(data);
+const fetchPendingPrompts = async () => {
+    const response = await fetch(`${apiBase}/prompts/pending`);
+    if (!response.ok) {
+        throw new Error('Failed to fetch prompts');
+    }
+    return await response.json();
 };
 
 const validatePrompts = (prompts) => {
@@ -37,6 +36,22 @@ const validatePrompts = (prompts) => {
 const generateSeed = () => {
     return Math.floor(1000000000 + Math.random() * 9000000000);
 };
+
+const incrementSuccessfulRuns = async (id) => {
+    console.log(`Incrementing successful runs for prompt ID: ${id}`);
+
+    const response = await fetch(`${apiBase}/prompts/${id}/increment-success`, {
+        method: 'PUT'
+    });
+
+    const errorText = await response.text();
+    if (!response.ok) {
+        throw new Error(`Failed to increment successful runs: ${errorText}`);
+    }
+
+    console.log(`Successfully incremented successful runs for prompt ID: ${id}`);
+};
+
 
 async function slowTypeText(t, selector, text, delay = 50) {
     for (const char of text) {
@@ -89,10 +104,12 @@ const getButtonsFromMessage = ClientFunction((messageID) => {
 });
 
 async function executePrompt(t, prompt) {
+    const seed = generateSeed();
+    const promptWithSeed = `${prompt.prompt} --seed ${seed}`;
+
     await slowTypeText(t, textInputSelector, '/im', 200);
     await t.click(dropdownOptionSelector.nth(0));
-    // await slowTypeText(t, textInputSelector, prompt);
-    await pasteText(t, textInputSelector, prompt);
+    await pasteText(t, textInputSelector, promptWithSeed);
     await t.pressKey('enter');
 
     await t.wait(15000);
@@ -100,24 +117,24 @@ async function executePrompt(t, prompt) {
     while (1 !== 2) {
         await log('Checking message container');
 
-        const message = await findMessageByPrompt(prompt);
+        const message = await findMessageByPrompt(promptWithSeed);
 
         if (message.content.includes('Waiting')) {
-            await log(`Waiting container found: ${prompt}`)
+            await log(`Waiting container found: ${promptWithSeed}`);
         } else if (message.content.includes('%')) {
             const renderProgress = await ClientFunction((message) => {
                 const match = message.content ? message.content.match(/(\d+)%/) : null;
                 return match ? match[1] : null;
             })(message);
 
-            await log(`Render by ${renderProgress}% for prompt: ${prompt}`)
+            await log(`Render by ${renderProgress}% for prompt: ${promptWithSeed}`);
         } else {
             const buttonTexts = await getButtonsFromMessage(message.id);
 
             if (buttonTexts.length === 4) {
                 for (let text of buttonTexts) {
                     await log(`Processing button: ${text}`);
-                    const finishedMessage = await Selector(`#${message.id}`)
+                    const finishedMessage = await Selector(`#${message.id}`);
                     const button = finishedMessage.find('button').withText(text);
 
                     if (await button.exists) {
@@ -127,8 +144,8 @@ async function executePrompt(t, prompt) {
                         let isButtonActivated = false;
                         let retries = 0;
 
-                        while (!isButtonActivated && retries < 100) {
-                            const finishedMessageNew = await Selector(`#${message.id}`)
+                        while (!isButtonActivated && retries < 20) {
+                            const finishedMessageNew = await Selector(`#${message.id}`);
                             await t.wait(checkInterval);
                             const updatedButton = await finishedMessageNew.find('button').withText(text);
 
@@ -143,16 +160,21 @@ async function executePrompt(t, prompt) {
                         }
 
                         if (!isButtonActivated) {
-                            await log(`Button with text: ${text} did not activate in time`);
-                            throw new Error(`Button with text: ${text} did not activate`);
+                            await log(`Button with text: ${text} did not activate after 20 attempts. Skipping this button and moving to the next.`);
+                            break;
                         }
                     } else {
                         await log(`Button with text "${text}" not found`);
                     }
                 }
+
+                await incrementSuccessfulRuns(prompt.id);
+
+                prompt.successful_runs++;
+
                 break;
             } else {
-                await log(`Upscale buttons not found for prompt: ${prompt}`);
+                await log(`Upscale buttons not found for prompt: ${promptWithSeed}`);
             }
             await log(`Here we are...`);
         }
@@ -169,10 +191,9 @@ test('Automate Midjourney Prompts', async t => {
         .typeText(loginPasswordSelector, password)
         .click(loginButtonSelector);
 
-    await t.navigateTo('https://discord.com/channels/1084714846290984990/1084714846290984993');
+    await t.navigateTo(process.env.SERVER);
 
-    const promptsFilePath = './prompts.json';
-    const prompts = readPromptsFromFile(promptsFilePath);
+    const prompts = await fetchPendingPrompts();
 
     if (!validatePrompts(prompts)) {
         throw new Error('Invalid prompts data');
@@ -180,42 +201,32 @@ test('Automate Midjourney Prompts', async t => {
 
     let currentRenderings = 0;
 
-    // Create a global variable to track current renderings
     await ClientFunction(() => {
         window.currentRenderings = 0;
     })();
 
-    /**
-     * @desc Iterate over prompts
-     */
     for (let i = 0; i < prompts.length; i++) {
         const prompt = prompts[i];
-        for (let j = 0; j < repetitions; j++) {
+        while (prompt.successful_runs < prompt.expected_runs) {
             while (await ClientFunction(() => window.currentRenderings)() >= maxConcurrentRenderings) {
                 await t.wait(checkInterval);
             }
 
-            // Increment current renderings
             await ClientFunction(() => {
                 window.currentRenderings++;
             })();
 
-            const seed = generateSeed();
-            const promptWithSeed = `${prompt.prompt} --seed ${seed}`;
+            await executePrompt(t, prompt);
 
-            await executePrompt(t, promptWithSeed);
-
-            // Decrement current renderings
             await ClientFunction(() => {
                 window.currentRenderings--;
             })();
 
-            // Log the progress after each prompt execution
-            const completed = i * repetitions + j + 1;
-            const total = prompts.length * repetitions;
+            const completed = prompt.successful_runs;
+            const total = prompt.expected_runs;
             const remaining = total - completed;
 
-            await log(`Completed prompts: ${completed} of ${total}. Remaining: ${remaining}.`);
+            await log(`Completed runs for current prompt: ${completed} of ${total}. Remaining: ${remaining}.`);
         }
     }
 

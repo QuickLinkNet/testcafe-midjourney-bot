@@ -65,7 +65,7 @@ async function upscaleAllButtons(t) {
                         let isButtonActivated = false;
                         let retries = 0;
 
-                        while (!isButtonActivated && retries < 100) {
+                        for (let retries = 0; retries < 10 && !isButtonActivated; retries++) {
                             await t.wait(checkInterval);
                             const updatedButton = Selector(`#${message.id}`).find('button').withText(button.text);
 
@@ -80,8 +80,8 @@ async function upscaleAllButtons(t) {
                         }
 
                         if (!isButtonActivated) {
-                            await log(`Button with text: ${button.text} did not activate in time`);
-                            throw new Error(`Button with text: ${button.text} did not activate`);
+                            await log(`Button with text: ${button.text} did not activate after 10 attempts. Moving to the next prompt.`);
+                            break;
                         }
                     } else {
                         await log(`Button with text "${button.text}" not found`);
