@@ -10,7 +10,7 @@ const email = process.env.EMAIL;
 const password = process.env.PASSWORD;
 const apiBase = process.env.API;
 
-const maxConcurrentRenderings = 1;
+const maxConcurrentRenderings = 2;
 const checkInterval = 2000;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
@@ -76,32 +76,35 @@ async function log(message) {
 const findMessageByPrompt = ClientFunction((prompt) => {
     const messages = Array.from(document.querySelectorAll('li[id^="chat-messages-"]'));
     const message = messages.find(msg => msg.textContent.includes(prompt));
-    return message ? {
+    if (!message) {
+        console.log(`No message found for prompt: ${prompt}`);
+        return null;
+    }
+    return {
         id: message.id,
         content: message.querySelector('[class^="markup_"][class*="messageContent_"]').textContent
-    } : null;
+    };
 });
 
 const getButtonsFromMessage = ClientFunction((messageID) => {
-    console.log(`Searching for message with ID: ${messageID}`);
     const message = document.querySelector(`#${messageID}`);
     if (!message) {
-        console.log('Message not found');
+        console.log(`Message not found for ID: ${messageID}`);
         return [];
     }
-    console.log('Message found, looking for buttons');
 
     const buttons = Array.from(message.querySelectorAll('button'));
-    console.log(`Found ${buttons.length} buttons`);
+    if (buttons.length === 0) {
+        console.log(`No buttons found for message ID: ${messageID}`);
+    }
 
-    const filteredButtons = buttons.filter(button => {
+    return buttons.filter(button => {
         const label = button.querySelector('.label_acadc1');
         return label && ['U1', 'U2', 'U3', 'U4'].includes(label.textContent);
-    });
-
-    console.log(`Filtered upscaled buttons length: ${filteredButtons.length}`);
-    return filteredButtons.map(button => button.textContent);
+    }).map(button => button.textContent);
 });
+
+const timeout = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function executePrompt(t, prompt) {
     const seed = generateSeed();
@@ -114,10 +117,15 @@ async function executePrompt(t, prompt) {
 
     await t.wait(15000);
 
-    while (1 !== 2) {
+    const timeoutDuration = 60000; // 60 seconds
+    const startTime = new Date().getTime();
+
+    while (new Date().getTime() - startTime < timeoutDuration) {
         await log('Checking message container');
 
         const message = await findMessageByPrompt(promptWithSeed);
+
+        if (!message) continue;
 
         if (message.content.includes('Waiting')) {
             await log(`Waiting container found: ${promptWithSeed}`);
@@ -176,16 +184,51 @@ async function executePrompt(t, prompt) {
             } else {
                 await log(`Upscale buttons not found for prompt: ${promptWithSeed}`);
             }
-            await log(`Here we are...`);
         }
 
         await t.wait(checkInterval);
     }
+
+    await log('Timeout reached for current prompt execution.');
 }
+
+const createInfoOverlay = ClientFunction(() => {
+    const overlay = document.createElement('div');
+    overlay.id = 'info-overlay';
+    overlay.style.position = 'fixed';
+    overlay.style.top = '10px';
+    overlay.style.right = '10px';
+    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+    overlay.style.color = '#fff';
+    overlay.style.padding = '10px';
+    overlay.style.zIndex = '10000';
+    overlay.style.fontSize = '14px';
+    document.body.appendChild(overlay);
+});
+
+const updateInfoOverlay = ClientFunction((completed, total, remaining, currentRenderings) => {
+    const overlay = document.getElementById('info-overlay');
+    overlay.innerHTML = `
+        <p>Completed Runs: ${completed}</p>
+        <p>Total Runs: ${total}</p>
+        <p>Remaining Runs: ${remaining}</p>
+        <p>Current Renderings: ${currentRenderings}</p>
+    `;
+});
+
+const manageRenderings = ClientFunction((action) => {
+    if (action === 'increment') {
+        window.currentRenderings++;
+    } else if (action === 'decrement') {
+        window.currentRenderings--;
+    } else if (action === 'get') {
+        return window.currentRenderings;
+    }
+    return window.currentRenderings;
+});
 
 test('Automate Midjourney Prompts', async t => {
     await t.expect(Selector('#app-mount').exists).ok('Ziel-Element existiert nicht');
-
     await t
         .typeText(loginUsernameSelector, email)
         .typeText(loginPasswordSelector, password)
@@ -194,12 +237,9 @@ test('Automate Midjourney Prompts', async t => {
     await t.navigateTo(process.env.SERVER);
 
     const prompts = await fetchPendingPrompts();
+    if (!validatePrompts(prompts)) throw new Error('Invalid prompts data');
 
-    if (!validatePrompts(prompts)) {
-        throw new Error('Invalid prompts data');
-    }
-
-    let currentRenderings = 0;
+    await createInfoOverlay();
 
     await ClientFunction(() => {
         window.currentRenderings = 0;
@@ -208,19 +248,25 @@ test('Automate Midjourney Prompts', async t => {
     for (let i = 0; i < prompts.length; i++) {
         const prompt = prompts[i];
         while (prompt.successful_runs < prompt.expected_runs) {
-            while (await ClientFunction(() => window.currentRenderings)() >= maxConcurrentRenderings) {
+            const currentRenderings = await manageRenderings('get');
+
+            await updateInfoOverlay(prompt.successful_runs, prompt.expected_runs, prompt.expected_runs - prompt.successful_runs, currentRenderings);
+
+            while (await manageRenderings('get') >= maxConcurrentRenderings) {
                 await t.wait(checkInterval);
             }
 
-            await ClientFunction(() => {
-                window.currentRenderings++;
-            })();
+            await manageRenderings('increment');
 
-            await executePrompt(t, prompt);
+            try {
+                await executePrompt(t, prompt);
+            } catch (error) {
+                await log(`Error during execution of prompt: ${prompt.prompt}, Error: ${error.message}`);
+                await manageRenderings('decrement');
+                continue;
+            }
 
-            await ClientFunction(() => {
-                window.currentRenderings--;
-            })();
+            await manageRenderings('decrement');
 
             const completed = prompt.successful_runs;
             const total = prompt.expected_runs;
