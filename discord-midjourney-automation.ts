@@ -1,17 +1,27 @@
-import { ClientFunction, Selector } from 'testcafe';
-import dotenv from 'dotenv';
+import { ClientFunction, Selector, t } from 'testcafe';
+import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+declare global {
+    interface Window {
+        currentRenderings: number;
+    }
+
+    namespace globalThis {
+        let currentRenderings: number;
+    }
+}
+
 fixture `Discord Midjourney Automation`
-    .page `https://discord.com/login`;
+  .page `https://discord.com/login`;
 
-const email = process.env.EMAIL;
-const password = process.env.PASSWORD;
-const apiBase = process.env.API;
+const email: string = process.env.EMAIL || '';
+const password: string = process.env.PASSWORD || '';
+const apiBase: string = process.env.API || '';
 
-const maxConcurrentRenderings = 2;
-const checkInterval = 2000;
+const maxConcurrentRenderings: number = 2;
+const checkInterval: number = 2000;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
 const loginPasswordSelector = '#uid_9';
@@ -19,11 +29,18 @@ const loginButtonSelector = 'button[type="submit"]';
 const textInputSelector = Selector('div').withAttribute('role', 'textbox');
 const dropdownOptionSelector = Selector('div').withAttribute('role', 'option');
 
-let messageIDs = {};
-let totalRuns = 0;  // Globale Deklaration
-let completedRuns = 0;  // Globale Deklaration
+interface Prompt {
+    id: string;
+    prompt: string;
+    expected_runs: number;
+    successful_runs: number;
+}
 
-const fetchPendingPrompts = async () => {
+let messageIDs: Record<string, { id: string }> = {};
+let totalRuns: number = 0;
+let completedRuns: number = 0;
+
+const fetchPendingPrompts = async (): Promise<Prompt[]> => {
     const response = await fetch(`${apiBase}/prompts/pending`);
     if (!response.ok) {
         throw new Error('Failed to fetch prompts');
@@ -31,15 +48,15 @@ const fetchPendingPrompts = async () => {
     return await response.json();
 };
 
-const validatePrompts = (prompts) => {
+const validatePrompts = (prompts: Prompt[]): boolean => {
     return prompts.every(prompt => typeof prompt.prompt === 'string' && prompt.prompt.length > 0);
 };
 
-const generateSeed = () => {
+const generateSeed = (): number => {
     return Math.floor(1000000000 + Math.random() * 9000000000);
 };
 
-const incrementSuccessfulRuns = async (id) => {
+const incrementSuccessfulRuns = async (id: string): Promise<void> => {
     console.log(`Incrementing successful runs for prompt ID: ${id}`);
 
     const response = await fetch(`${apiBase}/prompts/${id}/increment-success`, {
@@ -54,40 +71,40 @@ const incrementSuccessfulRuns = async (id) => {
     console.log(`Successfully incremented successful runs for prompt ID: ${id}`);
 };
 
-async function slowTypeText(t, selector, text, delay = 50) {
+async function slowTypeText(t: TestController, selector: Selector, text: string, delay: number = 50): Promise<void> {
     for (const char of text) {
         await t.typeText(selector, char, { speed: 1.0 });
         await t.wait(delay);
     }
 }
 
-async function pasteText(t, selector, text) {
+async function pasteText(t: TestController, selector: Selector, text: string): Promise<void> {
     await t.typeText(selector, text + ' --ar 8:3', { paste: true });
 }
 
-const universalLog = ClientFunction((message) => {
+const universalLog = ClientFunction((message: string) => {
     console.log(message);
 });
 
-async function log(message) {
+async function log(message: string): Promise<void> {
     console.log(message);
     await universalLog(message);
 }
 
-const findMessageByPrompt = ClientFunction((prompt) => {
+const findMessageByPrompt = ClientFunction((prompt: string) => {
     const messages = Array.from(document.querySelectorAll('li[id^="chat-messages-"]'));
-    const message = messages.find(msg => msg.textContent.includes(prompt));
+    const message = messages.find(msg => msg.textContent?.includes(prompt));
     if (!message) {
         console.log(`No message found for prompt: ${prompt}`);
         return null;
     }
     return {
         id: message.id,
-        content: message.querySelector('[class^="markup_"][class*="messageContent_"]').textContent
+        content: (message.querySelector('[class^="markup_"][class*="messageContent_"]') as HTMLElement)?.textContent || ''
     };
 });
 
-const getButtonsFromMessage = ClientFunction((messageID) => {
+const getButtonsFromMessage = ClientFunction((messageID: string) => {
     const message = document.querySelector(`#${messageID}`);
     if (!message) {
         console.log(`Message not found for ID: ${messageID}`);
@@ -101,13 +118,11 @@ const getButtonsFromMessage = ClientFunction((messageID) => {
 
     return buttons.filter(button => {
         const label = button.querySelector('.label_acadc1');
-        return label && ['U1', 'U2', 'U3', 'U4'].includes(label.textContent);
+        return label && ['U1', 'U2', 'U3', 'U4'].includes(label.textContent || '');
     }).map(button => button.textContent);
 });
 
-const timeout = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-async function executePrompt(t, prompt) {
+async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
     const seed = generateSeed();
     const promptWithSeed = `${prompt.prompt} --seed ${seed}`;
 
@@ -120,19 +135,19 @@ async function executePrompt(t, prompt) {
 
     const timeoutDuration = 600000; // Erhöht auf 10 Minuten
     const startTime = new Date().getTime();
-    let lastError = null;
+    let lastError: string | null = null;
 
     while (new Date().getTime() - startTime < timeoutDuration) {
         await log('Checking message container');
 
         await updateInfoOverlay(
-            completedRuns,
-            totalRuns,
-            totalRuns - completedRuns,
-            await manageRenderings('get'),
-            prompt.prompt,
-            'Checking message container...',
-            lastError
+          completedRuns,
+          totalRuns,
+          totalRuns - completedRuns,
+          await manageRenderings('get'),
+          prompt.prompt,
+          'Checking message container...',
+          lastError
         );
 
         const message = await findMessageByPrompt(promptWithSeed);
@@ -143,16 +158,16 @@ async function executePrompt(t, prompt) {
             await log(`Waiting container found: ${promptWithSeed}`);
 
             await updateInfoOverlay(
-                completedRuns,
-                totalRuns,
-                totalRuns - completedRuns,
-                await manageRenderings('get'),
-                prompt.prompt,
-                'Waiting for rendering to start...',
-                lastError
+              completedRuns,
+              totalRuns,
+              totalRuns - completedRuns,
+              await manageRenderings('get'),
+              prompt.prompt,
+              'Waiting for rendering to start...',
+              lastError
             );
         } else if (message.content.includes('%')) {
-            const renderProgress = await ClientFunction((message) => {
+            const renderProgress = await ClientFunction((message: { content: string }) => {
                 const match = message.content ? message.content.match(/(\d+)%/) : null;
                 return match ? match[1] : null;
             })(message);
@@ -160,13 +175,13 @@ async function executePrompt(t, prompt) {
             await log(`Render by ${renderProgress}% for prompt: ${promptWithSeed}`);
 
             await updateInfoOverlay(
-                completedRuns,
-                totalRuns,
-                totalRuns - completedRuns,
-                await manageRenderings('get'),
-                prompt.prompt,
-                `Rendering in progress... ${renderProgress}%`,
-                lastError
+              completedRuns,
+              totalRuns,
+              totalRuns - completedRuns,
+              await manageRenderings('get'),
+              prompt.prompt,
+              `Rendering in progress... ${renderProgress}%`,
+              lastError
             );
         } else {
             const buttonTexts = await getButtonsFromMessage(message.id);
@@ -174,43 +189,43 @@ async function executePrompt(t, prompt) {
             if (buttonTexts.length === 4) {
                 for (let text of buttonTexts) {
                     await log(`Processing button: ${text}`);
-                    const finishedMessage = await Selector(`#${message.id}`);
-                    const button = finishedMessage.find('button').withText(text);
+                    const finishedMessage = Selector(`#${message.id}`);
+                    const button = finishedMessage.find('button').withText(text!);
 
                     if (await button.exists) {
                         await t.click(button);
                         await log(`Clicked button with text: ${text}`);
 
                         await updateInfoOverlay(
-                            completedRuns,
-                            totalRuns,
-                            totalRuns - completedRuns,
-                            await manageRenderings('get'),
-                            prompt.prompt,
-                            `Button clicked: ${text}`,
-                            lastError
+                          completedRuns,
+                          totalRuns,
+                          totalRuns - completedRuns,
+                          await manageRenderings('get'),
+                          prompt.prompt,
+                          `Button clicked: ${text}`,
+                          lastError
                         );
 
                         let isButtonActivated = false;
                         let retries = 0;
 
                         while (!isButtonActivated && retries < 20) {
-                            const finishedMessageNew = await Selector(`#${message.id}`);
+                            const finishedMessageNew = Selector(`#${message.id}`);
                             await t.wait(checkInterval);
-                            const updatedButton = await finishedMessageNew.find('button').withText(text);
+                            const updatedButton = finishedMessageNew.find('button').withText(text!);
 
                             const buttonClass = await updatedButton.getAttribute('class');
-                            if (buttonClass.includes('colorBrand_')) {
+                            if (buttonClass?.includes('colorBrand_')) {
                                 await log(`Button with text: ${text} is activated`);
 
                                 await updateInfoOverlay(
-                                    completedRuns,
-                                    totalRuns,
-                                    totalRuns - completedRuns,
-                                    await manageRenderings('get'),
-                                    prompt.prompt,
-                                    `Button activated: ${text}`,
-                                    lastError
+                                  completedRuns,
+                                  totalRuns,
+                                  totalRuns - completedRuns,
+                                  await manageRenderings('get'),
+                                  prompt.prompt,
+                                  `Button activated: ${text}`,
+                                  lastError
                                 );
 
                                 isButtonActivated = true;
@@ -245,13 +260,13 @@ async function executePrompt(t, prompt) {
     await log('Timeout reached for current prompt execution.');
 
     await updateInfoOverlay(
-        completedRuns,
-        totalRuns,
-        totalRuns - completedRuns,
-        await manageRenderings('get'),
-        prompt.prompt,
-        'Timeout reached',
-        lastError
+      completedRuns,
+      totalRuns,
+      totalRuns - completedRuns,
+      await manageRenderings('get'),
+      prompt.prompt,
+      'Timeout reached',
+      lastError
     );
 }
 
@@ -269,20 +284,22 @@ const createInfoOverlay = ClientFunction(() => {
     document.body.appendChild(overlay);
 });
 
-const updateInfoOverlay = ClientFunction((completed, total, remaining, currentRenderings, currentPrompt, currentStatus, lastError) => {
+const updateInfoOverlay = ClientFunction((completed: number, total: number, remaining: number, currentRenderings: number, currentPrompt: string, currentStatus: string, lastError: string | null) => {
     const overlay = document.getElementById('info-overlay');
-    overlay.innerHTML = `
-        <p><strong>Completed Runs:</strong> ${completed}</p>
-        <p><strong>Total Runs:</strong> ${total}</p>
-        <p><strong>Remaining Runs:</strong> ${remaining}</p>
-        <p><strong>Current Renderings:</strong> ${currentRenderings}</p>
-        <p><strong>Current Prompt:</strong> ${currentPrompt}</p>
-        <p><strong>Status:</strong> ${currentStatus}</p>
-        <p><strong>Last Error:</strong> ${lastError || 'None'}</p>
-    `;
+    if (overlay) {
+        overlay.innerHTML = `
+            <p><strong>Completed Runs:</strong> ${completed}</p>
+            <p><strong>Total Runs:</strong> ${total}</p>
+            <p><strong>Remaining Runs:</strong> ${remaining}</p>
+            <p><strong>Current Renderings:</strong> ${currentRenderings}</p>
+            <p><strong>Current Prompt:</strong> ${currentPrompt}</p>
+            <p><strong>Status:</strong> ${currentStatus}</p>
+            <p><strong>Last Error:</strong> ${lastError || 'None'}</p>
+        `;
+    }
 });
 
-const manageRenderings = ClientFunction((action) => {
+const manageRenderings = ClientFunction((action: 'increment' | 'decrement' | 'get'): number => {
     if (action === 'increment') {
         window.currentRenderings++;
     } else if (action === 'decrement') {
@@ -296,13 +313,17 @@ const manageRenderings = ClientFunction((action) => {
 test('Automate Midjourney Prompts', async t => {
     await t.expect(Selector('#app-mount').exists).ok('Ziel-Element existiert nicht');
     await t
-        .typeText(loginUsernameSelector, email)
-        .typeText(loginPasswordSelector, password)
-        .click(loginButtonSelector);
+      .typeText(loginUsernameSelector, email)
+      .typeText(loginPasswordSelector, password)
+      .click(loginButtonSelector);
 
-    await t.navigateTo(process.env.SERVER);
+    if (process.env.SERVER) {
+        await t.navigateTo(process.env.SERVER);
+    } else {
+        throw new Error('SERVER environment variable is not defined');
+    }
 
-    const prompts = await fetchPendingPrompts();
+    const prompts: Prompt[] = await fetchPendingPrompts();
     if (!validatePrompts(prompts)) throw new Error('Invalid prompts data');
 
     totalRuns = prompts.reduce((sum, prompt) => sum + prompt.expected_runs, 0);
@@ -314,7 +335,15 @@ test('Automate Midjourney Prompts', async t => {
         window.currentRenderings = 0;
     })();
 
-    await updateInfoOverlay(completedRuns, totalRuns, totalRuns - completedRuns, await manageRenderings('get'));
+    await updateInfoOverlay(
+      completedRuns,
+      totalRuns,
+      totalRuns - completedRuns,
+      await manageRenderings('get'),
+      'current prompt',
+      'current status',
+      null
+    );
 
     for (let i = 0; i < prompts.length; i++) {
         const prompt = prompts[i];
@@ -329,14 +358,22 @@ test('Automate Midjourney Prompts', async t => {
                 await executePrompt(t, prompt);
                 completedRuns++; // Erhöhe completedRuns nach jedem erfolgreichen Prompt
             } catch (error) {
-                await log(`Error during execution of prompt: ${prompt.prompt}, Error: ${error.message}`);
+                await log(`Error during execution of prompt: ${prompt.prompt}, Error: ${(error as Error).message}`);
                 await manageRenderings('decrement');
                 continue;
             }
 
             await manageRenderings('decrement');
 
-            await updateInfoOverlay(completedRuns, totalRuns, totalRuns - completedRuns, await manageRenderings('get'));
+            await updateInfoOverlay(
+              completedRuns,
+              totalRuns,
+              totalRuns - completedRuns,
+              await manageRenderings('get'),
+              'current prompt',
+              'current status',
+              null
+            );
         }
     }
 
