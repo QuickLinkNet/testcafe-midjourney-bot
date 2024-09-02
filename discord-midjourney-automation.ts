@@ -91,11 +91,11 @@ async function log(message: string): Promise<void> {
     await universalLog(message);
 }
 
-const findMessageByPrompt = ClientFunction((prompt: string) => {
+const findMessageByPrompt = ClientFunction((seed: string) => {
     const messages = Array.from(document.querySelectorAll('li[id^="chat-messages-"]'));
-    const message = messages.find(msg => msg.textContent?.includes(prompt));
+    const message = messages.find(msg => msg.textContent?.includes(seed));
     if (!message) {
-        console.log(`No message found for prompt: ${prompt}`);
+        console.log(`No message found for seed: ${seed}`);
         return null;
     }
     return {
@@ -150,9 +150,15 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
           lastError
         );
 
-        const message = await findMessageByPrompt(promptWithSeed);
+        const seedStr = `--seed ${seed}`;
+        const message = await findMessageByPrompt(seedStr);
 
-        if (!message) continue;
+        if (!message) {
+            lastError = `No message found for prompt: ${promptWithSeed}`;
+            await log(lastError);
+            await t.wait(checkInterval); // Warte bevor ein neuer Versuch gestartet wird
+            continue; // Versuche erneut die Nachricht zu finden
+        }
 
         if (message.content.includes('Waiting')) {
             await log(`Waiting container found: ${promptWithSeed}`);
