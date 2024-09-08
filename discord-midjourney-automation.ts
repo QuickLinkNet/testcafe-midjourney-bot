@@ -40,8 +40,8 @@ let messageIDs: Record<string, { id: string }> = {};
 let totalRuns: number = 0;
 let completedRuns: number = 0;
 
-const fetchPendingPrompts = async (): Promise<Prompt[]> => {
-    const response = await fetch(`${apiBase}/prompts/pending`);
+const fetchPendingPrompts = async (limit: number = 10): Promise<Prompt[]> => {
+    const response = await fetch(`${apiBase}/prompts/pending?limit=${limit}`);
     if (!response.ok) {
         throw new Error('Failed to fetch prompts');
     }
