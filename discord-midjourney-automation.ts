@@ -37,8 +37,8 @@ interface Prompt {
 }
 
 let messageIDs: Record<string, { id: string }> = {};
-let totalRuns = prompts.reduce((sum, prompt) => sum + (prompt.expected_runs - prompt.successful_runs), 0); // Korrigiere die Berechnung
-let completedRuns = prompts.reduce((sum, prompt) => sum + prompt.successful_runs, 0);
+let totalRuns: number = 0;
+let completedRuns: number = 0;
 
 const fetchPendingPrompts = async (limit: number = 10): Promise<Prompt[]> => {
     const response = await fetch(`${apiBase}/prompts/pending?limit=${limit}`);
@@ -133,7 +133,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
 
     await t.wait(15000);
 
-    const timeoutDuration = 600000; // Erhöht auf 10 Minuten
+    const timeoutDuration = 600000;
     const startTime = new Date().getTime();
     let lastError: string | null = null;
 
@@ -156,8 +156,8 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
         if (!message) {
             lastError = `No message found for prompt: ${promptWithSeed}`;
             await log(lastError);
-            await t.wait(checkInterval); // Warte bevor ein neuer Versuch gestartet wird
-            continue; // Versuche erneut die Nachricht zu finden
+            await t.wait(checkInterval);
+            continue;
         }
 
         if (message.content.includes('Waiting')) {
