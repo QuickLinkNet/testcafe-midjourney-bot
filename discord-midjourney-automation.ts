@@ -37,8 +37,8 @@ interface Prompt {
 }
 
 let messageIDs: Record<string, { id: string }> = {};
-let totalRuns: number = 0;
-let completedRuns: number = 0;
+let totalRuns = prompts.reduce((sum, prompt) => sum + (prompt.expected_runs - prompt.successful_runs), 0); // Korrigiere die Berechnung
+let completedRuns = prompts.reduce((sum, prompt) => sum + prompt.successful_runs, 0);
 
 const fetchPendingPrompts = async (limit: number = 10): Promise<Prompt[]> => {
     const response = await fetch(`${apiBase}/prompts/pending?limit=${limit}`);
@@ -332,7 +332,7 @@ test('Automate Midjourney Prompts', async t => {
     const prompts: Prompt[] = await fetchPendingPrompts();
     if (!validatePrompts(prompts)) throw new Error('Invalid prompts data');
 
-    totalRuns = prompts.reduce((sum, prompt) => sum + prompt.expected_runs, 0);
+    totalRuns = prompts.reduce((sum, prompt) => sum + (prompt.expected_runs - prompt.successful_runs), 0);
     completedRuns = prompts.reduce((sum, prompt) => sum + prompt.successful_runs, 0);
 
     await createInfoOverlay();
@@ -347,7 +347,7 @@ test('Automate Midjourney Prompts', async t => {
       totalRuns - completedRuns,
       await manageRenderings('get'),
       'current prompt',
-      'current status',
+      'Starting automation...',
       null
     );
 
@@ -362,7 +362,17 @@ test('Automate Midjourney Prompts', async t => {
 
             try {
                 await executePrompt(t, prompt);
-                completedRuns++; // Erhöhe completedRuns nach jedem erfolgreichen Prompt
+                completedRuns++;
+
+                await updateInfoOverlay(
+                  completedRuns,
+                  totalRuns,
+                  totalRuns - completedRuns,
+                  await manageRenderings('get'),
+                  prompt.prompt,
+                  'Prompt erfolgreich gerendert.',
+                  null
+                );
             } catch (error) {
                 await log(`Error during execution of prompt: ${prompt.prompt}, Error: ${(error as Error).message}`);
                 await manageRenderings('decrement');
@@ -370,16 +380,6 @@ test('Automate Midjourney Prompts', async t => {
             }
 
             await manageRenderings('decrement');
-
-            await updateInfoOverlay(
-              completedRuns,
-              totalRuns,
-              totalRuns - completedRuns,
-              await manageRenderings('get'),
-              'current prompt',
-              'current status',
-              null
-            );
         }
     }
 
