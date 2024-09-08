@@ -91,11 +91,11 @@ async function log(message: string): Promise<void> {
     await universalLog(message);
 }
 
-const findMessageByPrompt = ClientFunction((prompt: string) => {
+const findMessageByPrompt = ClientFunction((seed: string) => {
     const messages = Array.from(document.querySelectorAll('li[id^="chat-messages-"]'));
-    const message = messages.find(msg => msg.textContent?.includes(prompt));
+    const message = messages.find(msg => msg.textContent?.includes(seed));
     if (!message) {
-        console.log(`No message found for prompt: ${prompt}`);
+        console.log(`No message found for seed: ${seed}`);
         return null;
     }
     return {
@@ -133,7 +133,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
 
     await t.wait(15000);
 
-    const timeoutDuration = 600000; // Erhöht auf 10 Minuten
+    const timeoutDuration = 600000;
     const startTime = new Date().getTime();
     let lastError: string | null = null;
 
@@ -150,9 +150,15 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
           lastError
         );
 
-        const message = await findMessageByPrompt(promptWithSeed);
+        const seedStr = `--seed ${seed}`;
+        const message = await findMessageByPrompt(seedStr);
 
-        if (!message) continue;
+        if (!message) {
+            lastError = `No message found for prompt: ${promptWithSeed}`;
+            await log(lastError);
+            await t.wait(checkInterval);
+            continue;
+        }
 
         if (message.content.includes('Waiting')) {
             await log(`Waiting container found: ${promptWithSeed}`);
@@ -356,7 +362,7 @@ test('Automate Midjourney Prompts', async t => {
 
             try {
                 await executePrompt(t, prompt);
-                completedRuns++; // Erhöhe completedRuns nach jedem erfolgreichen Prompt
+                completedRuns++;
             } catch (error) {
                 await log(`Error during execution of prompt: ${prompt.prompt}, Error: ${(error as Error).message}`);
                 await manageRenderings('decrement');
