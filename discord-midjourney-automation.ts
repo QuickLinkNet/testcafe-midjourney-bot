@@ -57,8 +57,6 @@ const generateSeed = (): number => {
 };
 
 const incrementSuccessfulRuns = async (id: string): Promise<void> => {
-    console.log(`Incrementing successful runs for prompt ID: ${id}`);
-
     const response = await fetch(`${apiBase}/prompts/${id}/increment-success`, {
         method: 'PUT'
     });
@@ -67,8 +65,6 @@ const incrementSuccessfulRuns = async (id: string): Promise<void> => {
     if (!response.ok) {
         throw new Error(`Failed to increment successful runs: ${errorText}`);
     }
-
-    console.log(`Successfully incremented successful runs for prompt ID: ${id}`);
 };
 
 async function slowTypeText(t: TestController, selector: Selector, text: string, delay: number = 50): Promise<void> {
@@ -87,7 +83,6 @@ const universalLog = ClientFunction((message: string) => {
 });
 
 async function log(message: string): Promise<void> {
-    console.log(message);
     await universalLog(message);
 }
 
@@ -95,7 +90,6 @@ const findMessageByPrompt = ClientFunction((seed: string) => {
     const messages = Array.from(document.querySelectorAll('li[id^="chat-messages-"]'));
     const message = messages.find(msg => msg.textContent?.includes(seed));
     if (!message) {
-        console.log(`No message found for seed: ${seed}`);
         return null;
     }
     return {
@@ -107,7 +101,6 @@ const findMessageByPrompt = ClientFunction((seed: string) => {
 const getButtonsFromMessage = ClientFunction((messageID: string) => {
     const message = document.querySelector(`#${messageID}`);
     if (!message) {
-        console.log(`Message not found for ID: ${messageID}`);
         return [];
     }
 
@@ -249,11 +242,6 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
                         await log(`Button with text "${text}" not found`);
                     }
                 }
-
-                await incrementSuccessfulRuns(prompt.id);
-
-                prompt.successful_runs++;
-
                 break;
             } else {
                 await log(`Upscale buttons not found for prompt: ${promptWithSeed}`);
@@ -362,6 +350,9 @@ test('Automate Midjourney Prompts', async t => {
 
             try {
                 await executePrompt(t, prompt);
+                await incrementSuccessfulRuns(prompt.id);
+
+                prompt.successful_runs++;
                 completedRuns++;
 
                 await updateInfoOverlay(
