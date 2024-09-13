@@ -41,11 +41,16 @@ let totalRuns: number = 0;
 let completedRuns: number = 0;
 
 const fetchPendingPrompts = async (limit: number = 10): Promise<Prompt[]> => {
-    const response = await fetch(`${apiBase}/prompts/pending?limit=${limit}`);
-    if (!response.ok) {
-        throw new Error('Failed to fetch prompts');
+    try {
+        const response = await fetch(`${apiBase}/prompts/pending?limit=${limit}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to fetch prompts: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        return await response.json();
+    } catch (error) {
+        throw new Error(`Error fetching pending prompts: ${(error as Error).message}`);
     }
-    return await response.json();
 };
 
 const validatePrompts = (prompts: Prompt[]): boolean => {
