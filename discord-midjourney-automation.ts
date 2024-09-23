@@ -1,5 +1,6 @@
 import { ClientFunction, Selector, t } from 'testcafe';
 import * as dotenv from 'dotenv';
+import axios from 'axios';
 
 dotenv.config();
 
@@ -40,7 +41,7 @@ let messageIDs: Record<string, { id: string }> = {};
 let totalRuns: number = 0;
 let completedRuns: number = 0;
 
-const fetchPendingPrompts = async (limit: number = 10): Promise<Prompt[]> => {
+const fetchPendingPrompts = async (limit: number = 1): Promise<Prompt[]> => {
     try {
         const response = await fetch(`${apiBase}/prompts/pending?limit=${limit}`);
         if (!response.ok) {
@@ -61,16 +62,18 @@ const generateSeed = (): number => {
     return Math.floor(1000000000 + Math.random() * 9000000000);
 };
 
-const incrementSuccessfulRuns = async (id: string): Promise<void> => {
-    const response = await fetch(`${apiBase}/prompts/${id}/increment-success`, {
-        method: 'PUT'
-    });
-
-    const errorText = await response.text();
-    if (!response.ok) {
-        throw new Error(`Failed to increment successful runs: ${errorText}`);
+async function createLogEntry(prompt_id: string, status: string, details: string, error_message: string | null = null) {
+    try {
+        await axios.post(`${apiBase}/log`, {
+            prompt_id,
+            status,
+            error_message,
+            details
+        });
+    } catch (err) {
+        console.error('Fehler beim Erstellen des Log-Eintrags:', err);
     }
-};
+}
 
 async function slowTypeText(t: TestController, selector: Selector, text: string, delay: number = 50): Promise<void> {
     for (const char of text) {
@@ -124,6 +127,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
     const seed = generateSeed();
     const promptWithSeed = `${prompt.prompt} --seed ${seed}`;
 
+
     await slowTypeText(t, textInputSelector, '/im', 200);
     await t.click(dropdownOptionSelector.nth(0));
     await pasteText(t, textInputSelector, promptWithSeed);
@@ -134,6 +138,11 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
     const timeoutDuration = 600000;
     const startTime = new Date().getTime();
     let lastError: string | null = null;
+
+    let status_waiting: boolean = false;
+    let status_render: boolean = false;
+    let status_finished: boolean = false;
+    let status_clicked_all: boolean = false;
 
     while (new Date().getTime() - startTime < timeoutDuration) {
         await log('Checking message container');
@@ -170,6 +179,12 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
               'Waiting for rendering to start...',
               lastError
             );
+
+            if (!status_waiting) {
+                await createLogEntry(prompt.id, 'waiting', 'Waiting to start');
+                status_waiting = true;
+            }
+
         } else if (message.content.includes('%')) {
             const renderProgress = await ClientFunction((message: { content: string }) => {
                 const match = message.content ? message.content.match(/(\d+)%/) : null;
@@ -187,8 +202,18 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
               `Rendering in progress... ${renderProgress}%`,
               lastError
             );
+
+            if (!status_render) {
+                await createLogEntry(prompt.id, 'render', 'Rendering prompt has start');
+                status_render = true;
+            }
         } else {
             const buttonTexts = await getButtonsFromMessage(message.id);
+
+            if (!status_finished) {
+                await createLogEntry(prompt.id, 'finished', 'Rendering prompt has finished');
+                status_finished = true;
+            }
 
             if (buttonTexts.length === 4) {
                 for (let text of buttonTexts) {
@@ -247,6 +272,12 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
                         await log(`Button with text "${text}" not found`);
                     }
                 }
+
+                if (!status_clicked_all) {
+                    await createLogEntry(prompt.id, 'clicked_all', 'All buttons have been clicked.');
+                    status_clicked_all = true;
+                }
+
                 break;
             } else {
                 await log(`Upscale buttons not found for prompt: ${promptWithSeed}`);
@@ -355,7 +386,6 @@ test('Automate Midjourney Prompts', async t => {
 
             try {
                 await executePrompt(t, prompt);
-                await incrementSuccessfulRuns(prompt.id);
 
                 prompt.successful_runs++;
                 completedRuns++;
