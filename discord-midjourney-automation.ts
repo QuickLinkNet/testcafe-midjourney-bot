@@ -41,7 +41,7 @@ let messageIDs: Record<string, { id: string }> = {};
 let totalRuns: number = 0;
 let completedRuns: number = 0;
 
-const fetchPendingPrompts = async (limit: number = 1): Promise<Prompt[]> => {
+const fetchPendingPrompts = async (limit: number = 10): Promise<Prompt[]> => {
     try {
         const response = await fetch(`${apiBase}/prompts/pending?limit=${limit}`);
         if (!response.ok) {
@@ -60,6 +60,17 @@ const validatePrompts = (prompts: Prompt[]): boolean => {
 
 const generateSeed = (): number => {
     return Math.floor(1000000000 + Math.random() * 9000000000);
+};
+
+const incrementSuccessfulRuns = async (id: string): Promise<void> => {
+    const response = await fetch(`${apiBase}/prompts/${id}/increment-success`, {
+        method: 'PUT'
+    });
+
+    const errorText = await response.text();
+    if (!response.ok) {
+        throw new Error(`Failed to increment successful runs: ${errorText}`);
+    }
 };
 
 async function createLogEntry(prompt_id: string, status: string, details: string, error_message: string | null = null) {
@@ -386,6 +397,7 @@ test('Automate Midjourney Prompts', async t => {
 
             try {
                 await executePrompt(t, prompt);
+                await incrementSuccessfulRuns(prompt.id);
 
                 prompt.successful_runs++;
                 completedRuns++;
