@@ -38,6 +38,7 @@ interface Prompt {
 }
 
 let messageIDs: Record<string, { id: string }> = {};
+
 let totalRuns: number = 0;
 let completedRuns: number = 0;
 
@@ -159,10 +160,8 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
         await log('Checking message container');
 
         await updateInfoOverlay(
-          completedRuns,
           totalRuns,
-          totalRuns - completedRuns,
-          await manageRenderings('get'),
+          completedRuns,
           prompt.prompt,
           'Checking message container...',
           lastError
@@ -182,10 +181,8 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
             await log(`Waiting container found: ${promptWithSeed}`);
 
             await updateInfoOverlay(
-              completedRuns,
               totalRuns,
-              totalRuns - completedRuns,
-              await manageRenderings('get'),
+              completedRuns,
               prompt.prompt,
               'Waiting for rendering to start...',
               lastError
@@ -205,10 +202,8 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
             await log(`Render by ${renderProgress}% for prompt: ${promptWithSeed}`);
 
             await updateInfoOverlay(
-              completedRuns,
               totalRuns,
-              totalRuns - completedRuns,
-              await manageRenderings('get'),
+              completedRuns,
               prompt.prompt,
               `Rendering in progress... ${renderProgress}%`,
               lastError
@@ -237,10 +232,8 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
                         await log(`Clicked button with text: ${text}`);
 
                         await updateInfoOverlay(
-                          completedRuns,
                           totalRuns,
-                          totalRuns - completedRuns,
-                          await manageRenderings('get'),
+                          completedRuns,
                           prompt.prompt,
                           `Button clicked: ${text}`,
                           lastError
@@ -259,10 +252,8 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
                                 await log(`Button with text: ${text} is activated`);
 
                                 await updateInfoOverlay(
-                                  completedRuns,
                                   totalRuns,
-                                  totalRuns - completedRuns,
-                                  await manageRenderings('get'),
+                                  completedRuns,
                                   prompt.prompt,
                                   `Button activated: ${text}`,
                                   lastError
@@ -287,9 +278,8 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
                 if (!status_clicked_all) {
                     await createLogEntry(prompt.id, 'clicked_all', 'All buttons have been clicked.');
                     status_clicked_all = true;
+                    break;
                 }
-
-                break;
             } else {
                 await log(`Upscale buttons not found for prompt: ${promptWithSeed}`);
             }
@@ -301,10 +291,8 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
     await log('Timeout reached for current prompt execution.');
 
     await updateInfoOverlay(
-      completedRuns,
       totalRuns,
-      totalRuns - completedRuns,
-      await manageRenderings('get'),
+      completedRuns,
       prompt.prompt,
       'Timeout reached',
       lastError
@@ -325,17 +313,19 @@ const createInfoOverlay = ClientFunction(() => {
     document.body.appendChild(overlay);
 });
 
-const updateInfoOverlay = ClientFunction((completed: number, total: number, remaining: number, currentRenderings: number, currentPrompt: string, currentStatus: string, lastError: string | null) => {
+const updateInfoOverlay = ClientFunction((total: number, completed: number, currentPrompt: string, currentStatus: string, lastError: string | null) => {
     const overlay = document.getElementById('info-overlay');
     if (overlay) {
         overlay.innerHTML = `
-            <p><strong>Completed Runs:</strong> ${completed}</p>
-            <p><strong>Total Runs:</strong> ${total}</p>
-            <p><strong>Remaining Runs:</strong> ${remaining}</p>
-            <p><strong>Current Renderings:</strong> ${currentRenderings}</p>
-            <p><strong>Current Prompt:</strong> ${currentPrompt}</p>
+            <h3>Automation Status</h3>
+            <p><strong>Prompts to render:</strong> ${total}</p>
+            <p><strong>Prompts rendered:</strong> ${completed}</p>
+            <p><strong>Current Prompt:</strong> ${currentPrompt.substring(0, 30)}</p>
             <p><strong>Status:</strong> ${currentStatus}</p>
             <p><strong>Last Error:</strong> ${lastError || 'None'}</p>
+            <div style="background-color: #555; width: 100%; height: 20px; border-radius: 5px; margin-top: 10px;">
+                <div style="background-color: #4caf50; width: ${(completed / total) * 100}%; height: 100%; border-radius: 5px;"></div>
+            </div>
         `;
     }
 });
@@ -368,7 +358,6 @@ test('Automate Midjourney Prompts', async t => {
     if (!validatePrompts(prompts)) throw new Error('Invalid prompts data');
 
     totalRuns = prompts.reduce((sum, prompt) => sum + (prompt.expected_runs - prompt.successful_runs), 0);
-    completedRuns = prompts.reduce((sum, prompt) => sum + prompt.successful_runs, 0);
 
     await createInfoOverlay();
 
@@ -377,10 +366,8 @@ test('Automate Midjourney Prompts', async t => {
     })();
 
     await updateInfoOverlay(
-      completedRuns,
       totalRuns,
-      totalRuns - completedRuns,
-      await manageRenderings('get'),
+      completedRuns,
       'current prompt',
       'Starting automation...',
       null
@@ -403,10 +390,8 @@ test('Automate Midjourney Prompts', async t => {
                 completedRuns++;
 
                 await updateInfoOverlay(
-                  completedRuns,
                   totalRuns,
-                  totalRuns - completedRuns,
-                  await manageRenderings('get'),
+                  completedRuns,
                   prompt.prompt,
                   'Prompt erfolgreich gerendert.',
                   null
