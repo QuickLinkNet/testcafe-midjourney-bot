@@ -21,7 +21,7 @@ const email: string = process.env.EMAIL || '';
 const password: string = process.env.PASSWORD || '';
 const apiBase: string = process.env.API || '';
 
-const maxConcurrentRenderings: number = 2;
+const maxConcurrentRenderings: number = 3;
 const checkInterval: number = 2000;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
@@ -87,7 +87,15 @@ async function createLogEntry(prompt_id: string, status: string, details: string
     }
 }
 
+async function clearTextField(t: TestController, selector: Selector): Promise<void> {
+    await t
+      .click(selector)
+      .pressKey('ctrl+a delete');
+}
+
 async function slowTypeText(t: TestController, selector: Selector, text: string, delay: number = 50): Promise<void> {
+    await clearTextField(t, selector);
+
     for (const char of text) {
         await t.typeText(selector, char, { speed: 1.0 });
         await t.wait(delay);
@@ -135,17 +143,32 @@ const getButtonsFromMessage = ClientFunction((messageID: string) => {
     }).map(button => button.textContent);
 });
 
+// Globales Flag zur Steuerung der exklusiven Abschnitte
+let isJobBusy = false;
+
 async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
     const seed = generateSeed();
     const promptWithSeed = `${prompt.prompt} --seed ${seed}`;
 
+    // --- Kritischer Abschnitt für die Texteingabe ---
+    while (isJobBusy) {
+        await t.wait(500); // Warten, bis der kritische Abschnitt frei wird
+    }
 
-    await slowTypeText(t, textInputSelector, '/im', 200);
-    await t.click(dropdownOptionSelector.nth(0));
-    await pasteText(t, textInputSelector, promptWithSeed);
-    await t.pressKey('enter');
+    isJobBusy = true;
+    try {
+        await clearTextField(t, textInputSelector);
+        await slowTypeText(t, textInputSelector, '/im', 500);
+        await t.click(dropdownOptionSelector.nth(0));
+        await pasteText(t, textInputSelector, promptWithSeed);
+        await t.pressKey('enter');
+    } finally {
+        isJobBusy = false; // Freigeben des kritischen Abschnitts
+    }
+    // --- Ende des kritischen Abschnitts für die Texteingabe ---
 
-    await t.wait(15000);
+    // Wartezeit für das Rendering (Simulation)
+    await t.wait(2000);
 
     const timeoutDuration = 600000;
     const startTime = new Date().getTime();
@@ -156,9 +179,9 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
     let status_finished: boolean = false;
     let status_clicked_all: boolean = false;
 
+    // Warte-Schleife, um das Rendering zu überwachen und auf Buttons zu reagieren
     while (new Date().getTime() - startTime < timeoutDuration) {
         await log('Checking message container');
-
         await updateInfoOverlay(
           totalRuns,
           completedRuns,
@@ -179,7 +202,6 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
 
         if (message.content.includes('Waiting')) {
             await log(`Waiting container found: ${promptWithSeed}`);
-
             await updateInfoOverlay(
               totalRuns,
               completedRuns,
@@ -200,7 +222,6 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
             })(message);
 
             await log(`Render by ${renderProgress}% for prompt: ${promptWithSeed}`);
-
             await updateInfoOverlay(
               totalRuns,
               completedRuns,
@@ -210,7 +231,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
             );
 
             if (!status_render) {
-                await createLogEntry(prompt.id, 'render', 'Rendering prompt has start');
+                await createLogEntry(prompt.id, 'render', 'Rendering prompt has started');
                 status_render = true;
             }
         } else {
@@ -222,58 +243,67 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
             }
 
             if (buttonTexts.length === 4) {
-                for (let text of buttonTexts) {
-                    await log(`Processing button: ${text}`);
-                    const finishedMessage = Selector(`#${message.id}`);
-                    const button = finishedMessage.find('button').withText(text!);
-
-                    if (await button.exists) {
-                        await t.click(button);
-                        await log(`Clicked button with text: ${text}`);
-
-                        await updateInfoOverlay(
-                          totalRuns,
-                          completedRuns,
-                          prompt.prompt,
-                          `Button clicked: ${text}`,
-                          lastError
-                        );
-
-                        let isButtonActivated = false;
-                        let retries = 0;
-
-                        while (!isButtonActivated && retries < 20) {
-                            const finishedMessageNew = Selector(`#${message.id}`);
-                            await t.wait(checkInterval);
-                            const updatedButton = finishedMessageNew.find('button').withText(text!);
-
-                            const buttonClass = await updatedButton.getAttribute('class');
-                            if (buttonClass?.includes('colorBrand_')) {
-                                await log(`Button with text: ${text} is activated`);
-
-                                await updateInfoOverlay(
-                                  totalRuns,
-                                  completedRuns,
-                                  prompt.prompt,
-                                  `Button activated: ${text}`,
-                                  lastError
-                                );
-
-                                isButtonActivated = true;
-                            } else {
-                                await log(`Waiting for button with text: ${text} to activate`);
-                            }
-                            retries++;
-                        }
-
-                        if (!isButtonActivated) {
-                            await log(`Button with text: ${text} did not activate after 20 attempts. Skipping this button and moving to the next.`);
-                            break;
-                        }
-                    } else {
-                        await log(`Button with text "${text}" not found`);
-                    }
+                while (isJobBusy) {
+                    await t.wait(500); // Warten, bis der kritische Abschnitt frei wird
                 }
+
+                isJobBusy = true;
+                try {
+                    for (let text of buttonTexts) {
+                        await log(`Processing button: ${text}`);
+                        const finishedMessage = Selector(`#${message.id}`);
+                        const button = finishedMessage.find('button').withText(text!);
+
+                        if (await button.exists) {
+                            await t.click(button);
+                            await log(`Clicked button with text: ${text}`);
+
+                            await updateInfoOverlay(
+                              totalRuns,
+                              completedRuns,
+                              prompt.prompt,
+                              `Button clicked: ${text}`,
+                              lastError
+                            );
+
+                            let isButtonActivated = false;
+                            let retries = 0;
+
+                            while (!isButtonActivated && retries < 20) {
+                                const finishedMessageNew = Selector(`#${message.id}`);
+                                await t.wait(checkInterval);
+                                const updatedButton = finishedMessageNew.find('button').withText(text!);
+
+                                const buttonClass = await updatedButton.getAttribute('class');
+                                if (buttonClass?.includes('colorBrand_')) {
+                                    await log(`Button with text: ${text} is activated`);
+                                    await updateInfoOverlay(
+                                      totalRuns,
+                                      completedRuns,
+                                      prompt.prompt,
+                                      `Button activated: ${text}`,
+                                      lastError
+                                    );
+
+                                    isButtonActivated = true;
+                                } else {
+                                    await log(`Waiting for button with text: ${text} to activate`);
+                                }
+                                retries++;
+                            }
+
+                            if (!isButtonActivated) {
+                                await log(`Button with text: ${text} did not activate after 20 attempts. Skipping this button and moving to the next.`);
+                                break;
+                            }
+                        } else {
+                            await log(`Button with text "${text}" not found`);
+                        }
+                    }
+                } finally {
+                    isJobBusy = false; // Freigeben des kritischen Abschnitts für das Button-Handling
+                }
+                // --- Ende des kritischen Abschnitts für das Button-Handling ---
 
                 if (!status_clicked_all) {
                     await createLogEntry(prompt.id, 'clicked_all', 'All buttons have been clicked.');
@@ -330,17 +360,24 @@ const updateInfoOverlay = ClientFunction((total: number, completed: number, curr
     }
 });
 
-const manageRenderings = ClientFunction((action: 'increment' | 'decrement' | 'get'): number => {
-    if (action === 'increment') {
-        window.currentRenderings++;
-    } else if (action === 'decrement') {
-        window.currentRenderings--;
-    } else if (action === 'get') {
-        return window.currentRenderings;
-    }
-    return window.currentRenderings;
-});
+let currentRenderings: number = 0;
 
+function incrementRenderings() {
+    currentRenderings++;
+}
+
+function decrementRenderings() {
+    currentRenderings--;
+}
+
+function getRenderingsCount() {
+    return currentRenderings;
+}
+
+// Globales Set zur Reservierung von Prompts
+const reservedPrompts = new Set<string>();
+
+// Optimierter Test mit klarer Verwaltung der aktiven Renderings
 test('Automate Midjourney Prompts', async t => {
     await t.expect(Selector('#app-mount').exists).ok('Ziel-Element existiert nicht');
     await t
@@ -358,57 +395,61 @@ test('Automate Midjourney Prompts', async t => {
     if (!validatePrompts(prompts)) throw new Error('Invalid prompts data');
 
     totalRuns = prompts.reduce((sum, prompt) => sum + (prompt.expected_runs - prompt.successful_runs), 0);
-
     await createInfoOverlay();
+    await ClientFunction(() => { window.currentRenderings = 0; })();
 
-    await ClientFunction(() => {
-        window.currentRenderings = 0;
-    })();
+    await updateInfoOverlay(totalRuns, completedRuns, 'Starting automation...', 'Starting automation...', null);
 
-    await updateInfoOverlay(
-      totalRuns,
-      completedRuns,
-      'current prompt',
-      'Starting automation...',
-      null
-    );
+    let activeRenderings: Promise<void>[] = [];
 
-    for (let i = 0; i < prompts.length; i++) {
-        const prompt = prompts[i];
-        while (prompt.successful_runs < prompt.expected_runs) {
-            while (await manageRenderings('get') >= maxConcurrentRenderings) {
-                await t.wait(checkInterval);
-            }
+    while (completedRuns < totalRuns) {
+        // Suche nach einem verfügbaren Prompt
+        const prompt = prompts.find(p => !reservedPrompts.has(p.id) && p.successful_runs < p.expected_runs);
 
-            await manageRenderings('increment');
+        if (!prompt) {
+            // Wenn keine weiteren Prompts zu rendern sind, warte auf Abschluss eines aktiven Renderings
+            await Promise.race(activeRenderings);
+            continue;
+        }
 
+        // Stelle sicher, dass die maximale Anzahl an Renderings nicht überschritten wird
+        if (activeRenderings.length >= maxConcurrentRenderings) {
+            await Promise.race(activeRenderings);
+            continue;
+        }
+
+        // Reserviere den Prompt
+        reservedPrompts.add(prompt.id);
+
+        const rendering = (async () => {
+            incrementRenderings();
             try {
                 await executePrompt(t, prompt);
-                await incrementSuccessfulRuns(prompt.id);
 
+                // Erst nach erfolgreichem Datenbank-Inkrement erhöhen wir den lokalen Zähler
+                await incrementSuccessfulRuns(prompt.id);
                 prompt.successful_runs++;
                 completedRuns++;
 
-                await updateInfoOverlay(
-                  totalRuns,
-                  completedRuns,
-                  prompt.prompt,
-                  'Prompt erfolgreich gerendert.',
-                  null
-                );
+                await updateInfoOverlay(totalRuns, completedRuns, '', 'Prompt erfolgreich gerendert.', null);
             } catch (error) {
                 await log(`Error during execution of prompt: ${prompt.prompt}, Error: ${(error as Error).message}`);
-                await manageRenderings('decrement');
-                continue;
+            } finally {
+                decrementRenderings();
+                reservedPrompts.delete(prompt.id); // Reservierung nach Abschluss entfernen
             }
+        })();
 
-            await manageRenderings('decrement');
-        }
+        activeRenderings.push(rendering);
+
+        // Sofortige Bereinigung der abgeschlossenen Promises
+        rendering.finally(() => {
+            activeRenderings = activeRenderings.filter(r => r !== rendering);
+        });
     }
 
-    await log('Aktueller Status der Prompts und deren Container-IDs:');
-
-    for (const prompt in messageIDs) {
-        await log(`Prompt: ${prompt}, Nachrichten-ID: ${messageIDs[prompt].id}`);
-    }
+    await Promise.all(activeRenderings);
+    console.log('Alle Prompts wurden erfolgreich verarbeitet.');
 });
+
+
