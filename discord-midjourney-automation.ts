@@ -14,9 +14,6 @@ declare global {
     }
 }
 
-fixture `Discord Midjourney Automation`
-  .page `https://discord.com/login`;
-
 const email: string = process.env.EMAIL || '';
 const password: string = process.env.PASSWORD || '';
 const apiBase: string = process.env.API || '';
@@ -147,6 +144,8 @@ const getButtonsFromMessage = ClientFunction((messageID: string) => {
 let isJobBusy = false;
 
 async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
+    await createJobOverlay(prompt.id, prompt.prompt);
+    await updateJobOverlay(prompt.id, 'Rendering gestartet', 0); // Anfangszustand
     const seed = generateSeed();
     const promptWithSeed = `${prompt.prompt} --seed ${seed}`;
 
@@ -157,13 +156,17 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
 
     isJobBusy = true;
     try {
-        await clearTextField(t, textInputSelector);
+        await t.click(textInputSelector);
+        await t.wait(250);  // ⬅️ Neu: Warten auf Eingabebereitschaft
         await slowTypeText(t, textInputSelector, '/im', 500);
+        await t.wait(250); // ⬅️ Neu: Warten auf Dropdown
         await t.click(dropdownOptionSelector.nth(0));
+        await t.wait(250); // ⬅️ Neu: Warten vor dem Einfügen des Prompts
         await pasteText(t, textInputSelector, promptWithSeed);
+        await t.wait(250); // ⬅️ Neu: Warten vor dem Absenden
         await t.pressKey('enter');
     } finally {
-        isJobBusy = false; // Freigeben des kritischen Abschnitts
+        isJobBusy = false;
     }
     // --- Ende des kritischen Abschnitts für die Texteingabe ---
 
@@ -182,13 +185,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
     // Warte-Schleife, um das Rendering zu überwachen und auf Buttons zu reagieren
     while (new Date().getTime() - startTime < timeoutDuration) {
         await log('Checking message container');
-        await updateInfoOverlay(
-          totalRuns,
-          completedRuns,
-          prompt.prompt,
-          'Checking message container...',
-          lastError
-        );
+        await updateJobOverlay(prompt.id, 'Checking message Container', 0);
 
         const seedStr = `--seed ${seed}`;
         const message = await findMessageByPrompt(seedStr);
@@ -202,13 +199,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
 
         if (message.content.includes('Waiting')) {
             await log(`Waiting container found: ${promptWithSeed}`);
-            await updateInfoOverlay(
-              totalRuns,
-              completedRuns,
-              prompt.prompt,
-              'Waiting for rendering to start...',
-              lastError
-            );
+            await updateJobOverlay(prompt.id, 'Waiting for rendering to start...', 0);
 
             if (!status_waiting) {
                 await createLogEntry(prompt.id, 'waiting', 'Waiting to start');
@@ -222,13 +213,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
             })(message);
 
             await log(`Render by ${renderProgress}% for prompt: ${promptWithSeed}`);
-            await updateInfoOverlay(
-              totalRuns,
-              completedRuns,
-              prompt.prompt,
-              `Rendering in progress... ${renderProgress}%`,
-              lastError
-            );
+            await updateJobOverlay(prompt.id, `Rendering in progress... ${renderProgress}%`, parseInt(renderProgress));
 
             if (!status_render) {
                 await createLogEntry(prompt.id, 'render', 'Rendering prompt has started');
@@ -258,13 +243,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
                             await t.click(button);
                             await log(`Clicked button with text: ${text}`);
 
-                            await updateInfoOverlay(
-                              totalRuns,
-                              completedRuns,
-                              prompt.prompt,
-                              `Button clicked: ${text}`,
-                              lastError
-                            );
+                            await updateJobOverlay(prompt.id, `Button clicked: ${text}%`, 100);
 
                             let isButtonActivated = false;
                             let retries = 0;
@@ -277,13 +256,7 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
                                 const buttonClass = await updatedButton.getAttribute('class');
                                 if (buttonClass?.includes('colorBrand_')) {
                                     await log(`Button with text: ${text} is activated`);
-                                    await updateInfoOverlay(
-                                      totalRuns,
-                                      completedRuns,
-                                      prompt.prompt,
-                                      `Button activated: ${text}`,
-                                      lastError
-                                    );
+                                    await updateJobOverlay(prompt.id, `Button activated: ${text}`, 100);
 
                                     isButtonActivated = true;
                                 } else {
@@ -318,45 +291,85 @@ async function executePrompt(t: TestController, prompt: Prompt): Promise<void> {
         await t.wait(checkInterval);
     }
 
+    await removeJobOverlay(prompt.id);
     await log('Timeout reached for current prompt execution.');
+    await updateJobOverlay(prompt.id, `Timeout reached`, 100);
 
-    await updateInfoOverlay(
-      totalRuns,
-      completedRuns,
-      prompt.prompt,
-      'Timeout reached',
-      lastError
-    );
 }
 
-const createInfoOverlay = ClientFunction(() => {
+// --- Hauptfortschritt-Overlay erstellen ---
+const createMainOverlay = ClientFunction(() => {
     const overlay = document.createElement('div');
-    overlay.id = 'info-overlay';
+    overlay.id = 'main-overlay';
     overlay.style.position = 'fixed';
     overlay.style.top = '10px';
     overlay.style.right = '10px';
     overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
     overlay.style.color = '#fff';
     overlay.style.padding = '10px';
+    overlay.style.width = '250px';
+    overlay.style.borderRadius = '8px';
     overlay.style.zIndex = '10000';
-    overlay.style.fontSize = '14px';
+    overlay.innerHTML = `
+        <h3>Gesamtfortschritt</h3>
+        <div id="progress-bar" style="background-color: #555; height: 20px; border-radius: 5px;">
+            <div id="progress-fill" style="background-color: #4caf50; width: 0%; height: 100%; border-radius: 5px;"></div>
+        </div>
+        <p id="progress-text">0 / 0 Prompts abgeschlossen</p>
+    `;
     document.body.appendChild(overlay);
 });
 
-const updateInfoOverlay = ClientFunction((total: number, completed: number, currentPrompt: string, currentStatus: string, lastError: string | null) => {
-    const overlay = document.getElementById('info-overlay');
+// --- Hauptfortschritt-Overlay aktualisieren ---
+const updateMainOverlay = ClientFunction((completed: number, total: number) => {
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+    if (progressFill && progressText) {
+        const progressPercentage = (completed / total) * 100;
+        progressFill.style.width = `${progressPercentage}%`;
+        progressText.textContent = `${completed} / ${total} Prompts abgeschlossen`;
+    }
+});
+
+// --- Einzelne Rendering-Overlays erstellen ---
+const createJobOverlay = ClientFunction((promptId: string, promptText: string) => {
+    const overlay = document.createElement('div');
+    overlay.id = `job-overlay-${promptId}`;
+    overlay.style.position = 'absolute'; // Dynamische Positionierung
+    overlay.style.bottom = `${10 + 80 * (parseInt(promptId) % 5)}px`; // Platzierung alle 5 in einer neuen Zeile
+    overlay.style.right = '10px';
+    overlay.style.backgroundColor = 'rgba(30, 30, 30, 0.9)';
+    overlay.style.color = '#fff';
+    overlay.style.padding = '10px';
+    overlay.style.width = '250px';
+    overlay.style.borderRadius = '8px';
+    overlay.style.zIndex = `${10000 + parseInt(promptId)}`; // Erhöhen des z-Index je nach Prompt-ID
+    overlay.innerHTML = `
+        <h4>Prompt ${promptId}</h4>
+        <p>${promptText}</p>
+        <p id="job-status-${promptId}">Status: Gestartet</p>
+        <div style="background-color: #555; height: 10px; border-radius: 5px;">
+            <div id="job-progress-${promptId}" style="background-color: #4caf50; width: 0%; height: 100%; border-radius: 5px;"></div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+});
+
+// --- Einzelne Rendering-Overlays aktualisieren ---
+const updateJobOverlay = ClientFunction((promptId: string, status: string, progress: number) => {
+    const jobStatus = document.getElementById(`job-status-${promptId}`);
+    const jobProgress = document.getElementById(`job-progress-${promptId}`);
+    if (jobStatus && jobProgress) {
+        jobStatus.textContent = `Status: ${status}`;
+        jobProgress.style.width = `${progress}%`;
+    }
+});
+
+// --- Einzelne Rendering-Overlays entfernen ---
+const removeJobOverlay = ClientFunction((promptId: string) => {
+    const overlay = document.getElementById(`job-overlay-${promptId}`);
     if (overlay) {
-        overlay.innerHTML = `
-            <h3>Automation Status</h3>
-            <p><strong>Prompts to render:</strong> ${total}</p>
-            <p><strong>Prompts rendered:</strong> ${completed}</p>
-            <p><strong>Current Prompt:</strong> ${currentPrompt.substring(0, 30)}</p>
-            <p><strong>Status:</strong> ${currentStatus}</p>
-            <p><strong>Last Error:</strong> ${lastError || 'None'}</p>
-            <div style="background-color: #555; width: 100%; height: 20px; border-radius: 5px; margin-top: 10px;">
-                <div style="background-color: #4caf50; width: ${(completed / total) * 100}%; height: 100%; border-radius: 5px;"></div>
-            </div>
-        `;
+        overlay.remove();
     }
 });
 
@@ -377,6 +390,9 @@ function getRenderingsCount() {
 // Globales Set zur Reservierung von Prompts
 const reservedPrompts = new Set<string>();
 
+fixture `Discord Midjourney Automation`
+  .page `https://discord.com/login`;
+
 // Optimierter Test mit klarer Verwaltung der aktiven Renderings
 test('Automate Midjourney Prompts', async t => {
     await t.expect(Selector('#app-mount').exists).ok('Ziel-Element existiert nicht');
@@ -395,10 +411,9 @@ test('Automate Midjourney Prompts', async t => {
     if (!validatePrompts(prompts)) throw new Error('Invalid prompts data');
 
     totalRuns = prompts.reduce((sum, prompt) => sum + (prompt.expected_runs - prompt.successful_runs), 0);
-    await createInfoOverlay();
+    await createMainOverlay();
+    await updateMainOverlay(completedRuns, totalRuns);
     await ClientFunction(() => { window.currentRenderings = 0; })();
-
-    await updateInfoOverlay(totalRuns, completedRuns, 'Starting automation...', 'Starting automation...', null);
 
     let activeRenderings: Promise<void>[] = [];
 
@@ -431,7 +446,7 @@ test('Automate Midjourney Prompts', async t => {
                 prompt.successful_runs++;
                 completedRuns++;
 
-                await updateInfoOverlay(totalRuns, completedRuns, '', 'Prompt erfolgreich gerendert.', null);
+                await updateMainOverlay(completedRuns, totalRuns);
             } catch (error) {
                 await log(`Error during execution of prompt: ${prompt.prompt}, Error: ${(error as Error).message}`);
             } finally {
@@ -451,5 +466,3 @@ test('Automate Midjourney Prompts', async t => {
     await Promise.all(activeRenderings);
     console.log('Alle Prompts wurden erfolgreich verarbeitet.');
 });
-
-
