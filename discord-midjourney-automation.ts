@@ -18,7 +18,7 @@ const email: string = process.env.EMAIL || '';
 const password: string = process.env.PASSWORD || '';
 const apiBase: string = process.env.API || '';
 
-const maxConcurrentRenderings: number = 3;
+const maxConcurrentRenderings: number = 1;
 const checkInterval: number = 2000;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
