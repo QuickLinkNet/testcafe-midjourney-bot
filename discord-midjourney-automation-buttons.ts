@@ -8,7 +8,7 @@ const password: string = process.env.PASSWORD || '';
 const checkInterval: number = 2000;
 
 const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
-const loginPasswordSelector = '#uid_9';
+const loginPasswordSelector = '#uid_34';
 const loginButtonSelector = 'button[type="submit"]';
 
 const findMessagesWithInactiveButtons = ClientFunction(() => {
