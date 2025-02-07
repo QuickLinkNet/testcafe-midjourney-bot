@@ -7,7 +7,7 @@ const email: string = process.env.EMAIL || '';
 const password: string = process.env.PASSWORD || '';
 const checkInterval: number = 2000;
 
-const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
+const loginUsernameSelector = '.inputDefault__0f084.input__0f084.inputField_d64f22';
 const loginPasswordSelector = '#uid_34';
 const loginButtonSelector = 'button[type="submit"]';
 
@@ -17,7 +17,7 @@ const findMessagesWithInactiveButtons = ClientFunction(() => {
     .filter(msg => {
       const buttons = msg.querySelectorAll('button');
       const hasInactiveUpscaleButtons = Array.from(buttons).some(button => {
-        const label = button.querySelector('.label_acadc1');
+        const label = button.querySelector('.label__57f77');
         const isUpscaleButton = label && ['U1', 'U2', 'U3', 'U4'].includes(label.textContent || '');
         const isInactive = !button.className.includes('colorBrand_');
         return isUpscaleButton && isInactive;
@@ -56,7 +56,7 @@ const getInactiveButtonsFromMessage = ClientFunction((messageID: string) => {
   const buttons = Array.from(message.querySelectorAll('button'));
   return buttons
     .filter(button => {
-      const label = button.querySelector('.label_acadc1');
+      const label = button.querySelector('.label__57f77');
       const isUpscaleButton = label && ['U1', 'U2', 'U3', 'U4'].includes(label.textContent || '');
       const isInactive = !button.className.includes('colorBrand_');
       return isUpscaleButton && isInactive;
