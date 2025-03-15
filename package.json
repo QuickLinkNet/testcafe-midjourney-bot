@@ -1,20 +1,23 @@
 {
-  "name": "testcafe",
+  "name": "discord-midjourney-automation",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Discord Midjourney Automation Tool",
+  "main": "discord-automation.ts",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "testcafe chrome discord-automation.ts",
+    "test:headless": "testcafe chrome:headless discord-automation.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "axios": "^1.7.9",
     "dotenv": "^16.4.5",
     "testcafe": "^3.6.2"
   },
   "devDependencies": {
-    "@types/node": "^22.5.0",
-    "typescript": "^5.5.4"
+    "@types/node": "^20.11.24",
+    "typescript": "^5.3.3"
   }
 }

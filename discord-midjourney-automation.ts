@@ -21,8 +21,8 @@ const apiBase: string = process.env.API || '';
 const maxConcurrentRenderings: number = 1;
 const checkInterval: number = 2000;
 
-const loginUsernameSelector = '.inputDefault_f8bc55.input_f8bc55.inputField_cc6ddd';
-const loginPasswordSelector = '#uid_9';
+const loginUsernameSelector = '.inputDefault__0f084.input__0f084.inputField_d64f22';
+const loginPasswordSelector = '#uid_34';
 const loginButtonSelector = 'button[type="submit"]';
 const textInputSelector = Selector('div').withAttribute('role', 'textbox');
 const dropdownOptionSelector = Selector('div').withAttribute('role', 'option');
@@ -41,7 +41,7 @@ let completedRuns: number = 0;
 
 const fetchPendingPrompts = async (limit: number = 10): Promise<Prompt[]> => {
     try {
-        const response = await fetch(`${apiBase}/prompts/pending?limit=${limit}`);
+        const response = await fetch(`${apiBase}/prompts/pending?secret=brot&limit=${limit}`);
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Failed to fetch prompts: ${response.status} ${response.statusText} - ${errorText}`);
