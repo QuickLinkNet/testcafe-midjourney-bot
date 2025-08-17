@@ -40,8 +40,6 @@ export const incrementSuccessfulRuns = async (id: string): Promise<void> => {
         method: 'GET'
     });
 
-    console.log(response);
-
     const errorText = await response.text();
     if (!response.ok) {
         throw new Error(`Failed to increment successful runs: ${errorText}`);
