@@ -97,5 +97,13 @@ Only prompts where `expected_runs > successful_runs` are scheduled. Successful r
 - Optional Discord webhooks for status notifications.
 - CI recipes (GitHub Actions) for lint + type checks.
 
+## Preview
+
+![preview.png](docs/images/preview.png)
+
 ## License
-MIT © Your Name. Contributions welcome via PRs! When publishing, include a screenshot of the overlay in action to highlight the UX polish.
+MIT © QuickLink. Contributions welcome via PRs!
+
+**Made with ❤️ by [QuickLink](https://github.com/QuickLinkNet)**
+
+![QuickLink Logo](./docs/images/quicklink_logo_small.png)
