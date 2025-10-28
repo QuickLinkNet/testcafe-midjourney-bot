@@ -1,0 +1,20 @@
+{
+  "prompts": [
+    {
+      "id": 1,
+      "title": "Neo Tokyo Skyline",
+      "prompt": "futuristic tokyo skyline at dusk, vibrant neon, cinematic lighting, ultra detailed",
+      "keywords": "city, neon, dusk",
+      "expected_runs": 2,
+      "successful_runs": 0
+    },
+    {
+      "id": 2,
+      "title": "Forest Spirit",
+      "prompt": "ethereal forest spirit emerging from misty woods, fantasy illustration, artstation trending",
+      "keywords": "fantasy, forest, spirit",
+      "expected_runs": 1,
+      "successful_runs": 0
+    }
+  ]
+}
