@@ -16,5 +16,5 @@ export async function slowTypeText(t: TestController, selector: Selector, text: 
 }
 
 export async function pasteText(t: TestController, selector: Selector, text: string): Promise<void> {
-    await t.typeText(selector, text + ' --ar 8:3', { paste: true });
+    await t.typeText(selector, text, { paste: true });
 }

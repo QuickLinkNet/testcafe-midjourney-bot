@@ -31,15 +31,22 @@ export const getButtonsFromMessage = ClientFunction((messageID: string) => {
     if (!message) return [];
 
     const buttons = Array.from(message.querySelectorAll('button'));
+    const normalize = (text: string | null | undefined) =>
+        (text || '').replace(/\s+/g, '').toUpperCase();
 
-    // Verbesserte Button-Erkennung
-    return buttons
-      .filter(button => {
-          const label = button.querySelector('.label__57f77');
-          return label && /U[1-4]/.test(label.textContent || '');
-      })
-      .map(button => {
-          const label = button.querySelector('.label__57f77');
-          return label?.textContent || '';
-      });
+    // Robustere Button-Erkennung: nutze Label-Klasse, aria-label oder Button-Text
+    const upscaleButtons = buttons
+        .map(button => {
+            const label = button.querySelector('.label__57f77');
+            const text = label?.textContent?.trim()
+                || button.getAttribute('aria-label')
+                || button.textContent
+                || '';
+            const normalized = normalize(text);
+            return /^U[1-4]$/.test(normalized) ? normalized : null;
+        })
+        .filter((val): val is string => Boolean(val));
+
+    // Duplikate entfernen, Reihenfolge beibehalten
+    return Array.from(new Set(upscaleButtons));
 });
