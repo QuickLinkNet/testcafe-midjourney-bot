@@ -147,7 +147,7 @@ const incrementApiPrompt = async (id: string): Promise<void> => {
   }
 };
 
-export const fetchPendingPrompts = async (limit: number = 20): Promise<Prompt[]> => {
+export const fetchPendingPrompts = async (limit: number = 100): Promise<Prompt[]> => {
   const source = resolveSource();
   if (source === SOURCE_API) {
     return fetchFromApi(limit);

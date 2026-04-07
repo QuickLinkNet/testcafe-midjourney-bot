@@ -1,3 +1,4 @@
 /.env
 /prompts.json
 node_modules
+.idea
