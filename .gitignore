@@ -2,3 +2,4 @@
 /prompts.json
 node_modules
 .idea
+/.vscode
