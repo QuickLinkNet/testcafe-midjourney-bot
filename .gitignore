@@ -3,3 +3,5 @@
 node_modules
 .idea
 /.vscode
+/.neurovault-state.json
+/.neurovault-outbox.json
