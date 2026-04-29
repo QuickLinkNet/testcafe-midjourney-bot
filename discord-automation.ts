@@ -17,8 +17,10 @@ import {
   setOverlayStatusText,
   updateQueueStats,
   appendOverlayLog,
+  consumeOverlayQueueRefillRequest,
   configureOverlayWorkers,
   getOverlayWorkerCount,
+  setOverlayQueueRefillEnabled,
   setOverlayWorkerCount,
   overlayStyles
 } from './src/ui/overlay';
@@ -33,6 +35,9 @@ const password: string = process.env.PASSWORD || '';
 
 const WORKER_MIN = 1;
 const WORKER_MAX = 3;
+const PROMPT_FETCH_LIMIT = Math.max(1, Number.parseInt(process.env.PROMPT_FETCH_LIMIT ?? '100', 10) || 100);
+const EMPTY_CONFIRM_ROUNDS = Math.max(1, Number.parseInt(process.env.PROMPT_EMPTY_CONFIRM_ROUNDS ?? '2', 10) || 2);
+const EMPTY_WAIT_MS = 5 * 60 * 1000;
 
 let totalRuns: number = 0;
 let completedRuns: number = 0;
@@ -84,6 +89,7 @@ test('Automate Midjourney Prompts', async t => {
     await configureOverlayWorkers(currentWorkerLimit, WORKER_MIN, WORKER_MAX);
     await initOverlayControls();
     await setOverlayPauseState(false);
+    await setOverlayQueueRefillEnabled(false);
     await setOverlayStatusText('Loading prompts...', 'idle');
     await appendOverlayLog('Login complete. Preparing prompt workload...', 'info');
     await appendOverlayLog(
@@ -104,10 +110,13 @@ test('Automate Midjourney Prompts', async t => {
       );
     }
 
-    const prompts: Prompt[] = await fetchPendingPrompts();
-    if (!validatePrompts(prompts)) {
+    const initialPrompts: Prompt[] = await fetchPendingPrompts(PROMPT_FETCH_LIMIT);
+    if (!validatePrompts(initialPrompts)) {
       throw new Error('Invalid prompts data');
     }
+    const prompts: Prompt[] = [...initialPrompts];
+    const seenPromptIds = new Set<number>(prompts.map(prompt => prompt.id));
+    let emptyHits = 0;
 
     reservedPrompts.clear();
     completedRuns = 0;
@@ -127,6 +136,7 @@ test('Automate Midjourney Prompts', async t => {
       prompts.reduce((sum, prompt) => sum + (prompt.expected_runs - prompt.successful_runs), 0);
 
     const getQueueDepth = () => Math.max(getRemainingRuns() - activeRenderings.length, 0);
+    const countOutstandingRuns = (prompt: Prompt) => Math.max(prompt.expected_runs - prompt.successful_runs, 0);
 
     await reporter.emitSystem({
       workerKey: workerKeys[0],
@@ -150,31 +160,7 @@ test('Automate Midjourney Prompts', async t => {
     await updateMainOverlay(completedRuns, totalRuns);
     await updateQueueStats(0, Math.max(totalRuns - completedRuns, 0), completedRuns);
 
-    if (totalRuns === 0) {
-      await setOverlayStatusText('No pending prompts', 'success');
-      await appendOverlayLog('Prompt source returned no pending items. Automation finished.', 'info');
-      await reporter.emitSystem({
-        workerKey: workerKeys[0],
-        stepKey: 'WAITING',
-        progress: 0,
-        message: 'No pending prompts',
-        phase: 'system',
-        substep: 'no_work',
-        jobId: 'system',
-        payload: {
-          run_id: runId,
-          source: promptSource,
-          active_workers: activeRenderings.length,
-          worker_limit: currentWorkerLimit,
-          queue_depth: getQueueDepth(),
-          total_runs: totalRuns,
-          completed_runs: completedRuns
-        }
-      });
-      return;
-    }
-
-    await setOverlayStatusText('Ready', 'running');
+    await setOverlayStatusText(totalRuns > 0 ? 'Ready' : 'Waiting for prompts', 'running');
     await appendOverlayLog(`Starting automation with ${totalRuns} remaining runs.`, 'info');
 
     const updateQueueSnapshot = async () => {
@@ -194,7 +180,7 @@ test('Automate Midjourney Prompts', async t => {
       return null;
     };
 
-    while (completedRuns < totalRuns) {
+    while (true) {
       const overlayWorkerRaw = await getOverlayWorkerCount();
       const normalizedWorker = clampWorkerCount(overlayWorkerRaw);
 
@@ -287,7 +273,180 @@ test('Automate Midjourney Prompts', async t => {
 
       if (!prompt) {
         if (activeRenderings.length === 0) {
-          break;
+          await setOverlayStatusText('Refilling prompt queue...', 'idle');
+          await appendOverlayLog(`Refilling prompt queue (batch ${PROMPT_FETCH_LIMIT}).`, 'info');
+          await reporter.emitSystem({
+            workerKey: workerKeys[0],
+            stepKey: 'WAITING',
+            progress: 0,
+            message: 'Prompt queue refill started',
+            phase: 'system',
+            substep: 'queue_refill_start',
+            jobId: 'system',
+            payload: {
+              run_id: runId,
+              source: promptSource,
+              queue_depth_before: getQueueDepth(),
+              fetch_limit: PROMPT_FETCH_LIMIT,
+              empty_hits: emptyHits
+            }
+          });
+
+          const refillStartedAt = Date.now();
+          try {
+            const fetchedPrompts = await fetchPendingPrompts(PROMPT_FETCH_LIMIT);
+            if (!validatePrompts(fetchedPrompts)) {
+              throw new Error('Invalid prompts data on refill');
+            }
+
+            let acceptedCount = 0;
+            let dedupedCount = 0;
+            let addedRuns = 0;
+
+            for (const fetchedPrompt of fetchedPrompts) {
+              if (seenPromptIds.has(fetchedPrompt.id)) {
+                dedupedCount++;
+                continue;
+              }
+
+              const outstanding = countOutstandingRuns(fetchedPrompt);
+              if (outstanding <= 0) {
+                dedupedCount++;
+                continue;
+              }
+
+              prompts.push(fetchedPrompt);
+              seenPromptIds.add(fetchedPrompt.id);
+              acceptedCount++;
+              addedRuns += outstanding;
+            }
+
+            if (acceptedCount > 0) {
+              totalRuns += addedRuns;
+              emptyHits = 0;
+              await setOverlayQueueRefillEnabled(false);
+              await updateMainOverlay(completedRuns, totalRuns);
+              await appendOverlayLog(
+                `Queue refill added ${acceptedCount} prompt(s), ${addedRuns} run(s).`,
+                'success'
+              );
+              await reporter.emitSystem({
+                workerKey: workerKeys[0],
+                stepKey: 'WAITING',
+                progress: 0,
+                message: `Prompt queue refill added ${acceptedCount} prompts`,
+                phase: 'system',
+                substep: 'queue_refill_success',
+                jobId: 'system',
+                payload: {
+                  run_id: runId,
+                  source: promptSource,
+                  fetched_count: fetchedPrompts.length,
+                  accepted_count: acceptedCount,
+                  deduped_count: dedupedCount,
+                  added_runs: addedRuns,
+                  queue_depth_after: getQueueDepth(),
+                  refill_duration_ms: Date.now() - refillStartedAt,
+                  total_runs: totalRuns,
+                  completed_runs: completedRuns
+                }
+              });
+              await setOverlayStatusText('Active', 'running');
+            } else {
+              emptyHits++;
+              await appendOverlayLog(`Queue refill empty (${emptyHits}/${EMPTY_CONFIRM_ROUNDS}).`, 'warn');
+              await reporter.emitSystem({
+                workerKey: workerKeys[0],
+                stepKey: 'WAITING',
+                progress: 0,
+                message: `Prompt queue refill empty (${emptyHits}/${EMPTY_CONFIRM_ROUNDS})`,
+                phase: 'system',
+                substep: 'queue_refill_empty',
+                jobId: 'system',
+                payload: {
+                  run_id: runId,
+                  source: promptSource,
+                  fetched_count: fetchedPrompts.length,
+                  accepted_count: acceptedCount,
+                  deduped_count: dedupedCount,
+                  empty_hits: emptyHits,
+                  refill_duration_ms: Date.now() - refillStartedAt
+                }
+              });
+              if (emptyHits >= EMPTY_CONFIRM_ROUNDS) {
+                await setOverlayQueueRefillEnabled(true);
+                const waitUntil = Date.now() + EMPTY_WAIT_MS;
+                await setOverlayStatusText('No prompts available. Waiting 5 minutes or manual reload.', 'idle');
+                await appendOverlayLog('No prompts available. Waiting 5 minutes (or click Reload Prompts).', 'warn');
+                await reporter.emitSystem({
+                  workerKey: workerKeys[0],
+                  stepKey: 'WAITING',
+                  progress: 0,
+                  message: 'Prompt source empty. Entering cooldown wait.',
+                  phase: 'system',
+                  substep: 'queue_wait_cooldown',
+                  jobId: 'system',
+                  payload: {
+                    run_id: runId,
+                    source: promptSource,
+                    empty_hits: emptyHits,
+                    wait_ms: EMPTY_WAIT_MS
+                  }
+                });
+
+                let manualReload = false;
+                while (Date.now() < waitUntil) {
+                  if (await consumeOverlayQueueRefillRequest()) {
+                    manualReload = true;
+                    break;
+                  }
+                  await t.wait(1000);
+                }
+
+                await setOverlayQueueRefillEnabled(false);
+                emptyHits = 0;
+                await reporter.emitSystem({
+                  workerKey: workerKeys[0],
+                  stepKey: 'WAITING',
+                  progress: 0,
+                  message: manualReload
+                    ? 'Manual prompt reload requested'
+                    : 'Prompt cooldown wait elapsed; retrying refill',
+                  phase: 'system',
+                  substep: manualReload ? 'queue_refill_manual' : 'queue_refill_retry_after_wait',
+                  jobId: 'system',
+                  payload: {
+                    run_id: runId,
+                    source: promptSource
+                  }
+                });
+                await setOverlayStatusText('Retrying prompt queue...', 'running');
+                continue;
+              }
+              await t.wait(1500);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown refill error';
+            await appendOverlayLog(`Queue refill failed: ${message}`, 'warn');
+            await reporter.emitSystem({
+              workerKey: workerKeys[0],
+              stepKey: 'WAITING',
+              progress: 0,
+              message: `Prompt queue refill failed: ${message}`,
+              phase: 'system',
+              substep: 'queue_refill_error',
+              jobId: 'system',
+              payload: {
+                run_id: runId,
+                source: promptSource,
+                empty_hits: emptyHits,
+                queue_depth_before: getQueueDepth()
+              }
+            });
+            await t.wait(2000);
+          }
+          await updateQueueSnapshot();
+          continue;
         }
         await setOverlayStatusText('Waiting for active renderings...', 'idle');
         if (activeRenderings.length > 0) {

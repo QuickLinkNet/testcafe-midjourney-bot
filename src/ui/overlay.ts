@@ -407,6 +407,7 @@ export const createMainOverlay = ClientFunction((styles: string) => {
             </div>
             <div class="control-bar">
                 <button id="automation-toggle" class="control-button" type="button">Pause (Ctrl+Shift+P)</button>
+                <button id="queue-refill" class="control-button" type="button" disabled>Reload Prompts</button>
                 <div class="worker-control" title="Adjust worker limit">
                     <button id="worker-decrease" class="worker-button" type="button" aria-label="Decrease workers">-</button>
                     <div class="worker-display">
@@ -432,6 +433,10 @@ export const initOverlayControls = ClientFunction(() => {
             paused: false,
             statusText: 'Active',
             statusTone: 'running',
+            queueRefill: {
+                enabled: false,
+                requested: false
+            },
             worker: {
                 count: 1,
                 min: 1,
@@ -441,6 +446,12 @@ export const initOverlayControls = ClientFunction(() => {
     }
 
     const state = win.__automationOverlayState;
+    if (!state.queueRefill) {
+        state.queueRefill = {
+            enabled: false,
+            requested: false
+        };
+    }
     if (!state.worker) {
         state.worker = {
             count: 1,
@@ -451,6 +462,7 @@ export const initOverlayControls = ClientFunction(() => {
 
     const statusEl = document.getElementById('automation-status') as HTMLElement | null;
     const toggleButton = document.getElementById('automation-toggle') as HTMLButtonElement | null;
+    const queueRefillButton = document.getElementById('queue-refill') as HTMLButtonElement | null;
     const workerDecrease = document.getElementById('worker-decrease') as HTMLButtonElement | null;
     const workerIncrease = document.getElementById('worker-increase') as HTMLButtonElement | null;
     const workerDisplay = document.getElementById('worker-count-display') as HTMLElement | null;
@@ -479,6 +491,11 @@ export const initOverlayControls = ClientFunction(() => {
             const text = state.paused ? 'Paused' : state.statusText || 'Active';
             statusEl.setAttribute('data-tone', tone);
             statusEl.textContent = `Status: ${text}`;
+        }
+        if (queueRefillButton) {
+            const queueRefill = state.queueRefill || { enabled: false };
+            queueRefillButton.disabled = !queueRefill.enabled;
+            queueRefillButton.textContent = queueRefill.enabled ? 'Reload Prompts' : 'Reload (empty only)';
         }
     };
 
@@ -539,6 +556,18 @@ export const initOverlayControls = ClientFunction(() => {
             });
         }
 
+        if (queueRefillButton) {
+            queueRefillButton.addEventListener('click', () => {
+                const queueRefill = state.queueRefill;
+                if (!queueRefill || !queueRefill.enabled) {
+                    return;
+                }
+                queueRefill.requested = true;
+                queueRefill.enabled = false;
+                refreshStatus();
+            });
+        }
+
         win.__automationOverlayControlsBound = true;
     }
 });
@@ -587,6 +616,49 @@ export const setOverlayStatusText = ClientFunction((statusText: string, tone: st
     if (typeof win.__automationOverlayUpdate === 'function') {
         win.__automationOverlayUpdate();
     }
+});
+
+export const setOverlayQueueRefillEnabled = ClientFunction((enabled: boolean) => {
+    const win = window as any;
+    if (!win.__automationOverlayState) {
+        win.__automationOverlayState = {
+            paused: false,
+            statusText: 'Active',
+            statusTone: 'running',
+            queueRefill: {
+                enabled,
+                requested: false
+            },
+            worker: {
+                count: 1,
+                min: 1,
+                max: 1
+            }
+        };
+    }
+
+    if (!win.__automationOverlayState.queueRefill) {
+        win.__automationOverlayState.queueRefill = {
+            enabled,
+            requested: false
+        };
+    } else {
+        win.__automationOverlayState.queueRefill.enabled = enabled;
+    }
+
+    if (typeof win.__automationOverlayUpdate === 'function') {
+        win.__automationOverlayUpdate();
+    }
+});
+
+export const consumeOverlayQueueRefillRequest = ClientFunction(() => {
+    const win = window as any;
+    const queueRefill = win.__automationOverlayState?.queueRefill;
+    if (!queueRefill || !queueRefill.requested) {
+        return false;
+    }
+    queueRefill.requested = false;
+    return true;
 });
 
 export const configureOverlayWorkers = ClientFunction((initial: number, min: number, max: number) => {
