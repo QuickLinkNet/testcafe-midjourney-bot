@@ -50,13 +50,7 @@ fixture`Discord Midjourney Automation`
 test('Automate Midjourney Prompts', async t => {
   const reporter = await createNeuroVaultReporter();
   const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  let heartbeatPayload: Record<string, unknown> = { run_id: runId };
   const workerKeys = Array.from({ length: WORKER_MAX }, (_, index) => `mj_w${index + 1}`);
-  const syncHeartbeatWorkers = (activeLimit: number) => {
-    const activeWorkers = workerKeys.slice(0, Math.max(WORKER_MIN, Math.min(WORKER_MAX, activeLimit)));
-    reporter.startHeartbeat(activeWorkers, 45000, heartbeatPayload);
-  };
-  syncHeartbeatWorkers(currentWorkerLimit);
 
   await t.setNativeDialogHandler(() => true);
 
@@ -99,8 +93,6 @@ test('Automate Midjourney Prompts', async t => {
 
     const promptSourceRaw = getPromptSource();
     const promptSource: 'api' | 'file' = promptSourceRaw === 'api' ? 'api' : 'file';
-    heartbeatPayload = { run_id: runId, source: promptSource };
-    syncHeartbeatWorkers(currentWorkerLimit);
     if (promptSource === 'api') {
       await appendOverlayLog('Prompt source: remote API (using API, API_SECRET).', 'info');
     } else {
@@ -190,7 +182,6 @@ test('Automate Midjourney Prompts', async t => {
 
       if (normalizedWorker !== currentWorkerLimit) {
         currentWorkerLimit = normalizedWorker;
-        syncHeartbeatWorkers(currentWorkerLimit);
         await appendOverlayLog(
           `Worker limit adjusted to ${currentWorkerLimit} concurrent job(s).`,
           'info'

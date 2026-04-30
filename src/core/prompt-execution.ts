@@ -21,22 +21,24 @@ export interface PromptExecutionContext {
 export async function executePrompt(t: TestController, prompt: Prompt, context: PromptExecutionContext): Promise<void> {
     const jobId = prompt.id.toString();
     const { reporter, workerKey, attempt, runId, promptSource } = context;
-    await createJobOverlay(jobId, prompt.prompt);
+    const overlayKey = `${jobId}-${runId}-${attempt}`;
+    await createJobOverlay(jobId, prompt.prompt, overlayKey);
 
     let overlayRemoved = false;
     const safeRemoveOverlay = async () => {
         if (overlayRemoved) return;
         overlayRemoved = true;
-        await removeJobOverlay(jobId);
+        await removeJobOverlay(overlayKey);
     };
 
     let lastStatus = '';
     let lastProgress = -1;
     let lastStep: NeuroVaultStepKey | null = null;
     let lastSubstep = '';
-    let lastProgressRatio = -1;
+    const lastProgressByChannel = new Map<string, number>();
     let failureReported = false;
     let warningCount = 0;
+    let renderGateReached = false;
     const promptLabel = prompt.title?.trim() || prompt.prompt.trim();
     const promptHash = createHash('sha1').update(prompt.prompt).digest('hex').slice(0, 12);
     const startedAtMs = Date.now();
@@ -44,7 +46,7 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
     const updateJobState = async (status: string, progress: number) => {
         const normalized = Math.max(0, Math.min(progress, 100));
         if (status !== lastStatus || normalized !== lastProgress) {
-            await updateJobOverlay(jobId, status, normalized);
+            await updateJobOverlay(overlayKey, status, normalized);
             lastStatus = status;
             lastProgress = normalized;
         }
@@ -92,10 +94,12 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
         payload?: Record<string, unknown>
     ) => {
         const rounded = Number(progress.toFixed(3));
-        if (Math.abs(rounded - lastProgressRatio) < 0.001) {
+        const channelKey = `${stepKey}:${substep ?? 'unspecified'}`;
+        const previous = lastProgressByChannel.get(channelKey);
+        if (typeof previous === 'number' && Math.abs(rounded - previous) < 0.001) {
             return;
         }
-        lastProgressRatio = rounded;
+        lastProgressByChannel.set(channelKey, rounded);
         await reporter.emitProgressUpdate({
             workerKey,
             stepKey,
@@ -211,27 +215,27 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
 
             if (!message) {
                 lastError = `No message found for prompt: ${promptWithSeed}`;
-                if (!waitingLogged) {
-                    await appendOverlayLog(`Prompt #${prompt.id} waiting for first response.`, 'info');
-                    waitingLogged = true;
+                if (!renderGateReached) {
+                    if (!waitingLogged) {
+                        await appendOverlayLog(`Prompt #${prompt.id} waiting for first response.`, 'info');
+                        waitingLogged = true;
+                    }
+                    await updateJobState('Waiting for first response...', Math.max(lastProgress, 0));
+                } else {
+                    await updateJobState('Waiting for final buttons...', Math.max(lastProgress, 95));
                 }
-                await emitStep('WAITING', 0, 'waiting', 'Waiting for first Midjourney response', 'first_response', {
-                    wait_reason: 'first_response',
-                    queue_age_seconds: queueAgeSeconds
-                });
-                await updateJobState('Waiting for first response...', Math.max(lastProgress, 0));
                 await t.wait(checkInterval);
                 continue;
             }
 
-            if (message.content.includes('Waiting')) {
+            if (message.content.includes('Waiting') && !renderGateReached) {
                 await log(`Waiting container found: ${promptWithSeed}`);
                 await emitStep('WAITING', 0, 'waiting', 'Prompt is queued in Midjourney', 'queue', {
                     wait_reason: 'queue',
                     queue_age_seconds: queueAgeSeconds,
                     discord_message_id: message.id
                 });
-                await updateJobState('Queued in Midjourney', Math.max(lastProgress, 10));
+                await updateJobState('Queued in Midjourney', Math.max(lastProgress, 0));
                 await t.wait(checkInterval);
                 continue;
             } else if (message.content.includes('%')) {
@@ -254,6 +258,9 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
                     milestone: milestone >= 25 ? milestone : undefined,
                     eta_seconds: etaSeconds
                 });
+                if (progress >= 100 || progressRatio >= 1) {
+                    renderGateReached = true;
+                }
                 await updateJobState(`Rendering in progress (${progress}%)`, progress);
 
                 if (milestone >= 25 && !progressMilestones.has(milestone)) {
@@ -268,27 +275,54 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
                 continue;
             } else {
                 const buttonTexts = await getButtonsFromMessage(message.id);
+                const upscaleButtons = ['U1', 'U2', 'U3', 'U4'].filter(label => buttonTexts.includes(label));
 
-                if (buttonTexts.length >= 4) {
+                if (upscaleButtons.length === 4) {
                     while (isJobBusy) {
                         await t.wait(500);
                     }
 
                     isJobBusy = true;
                     try {
-                        await emitStep('UPSCALE', 0.95, 'upscale', 'Postprocessing started', 'buttons_detected', {
-                            buttons_expected: buttonTexts.length
+                        if (!renderGateReached) {
+                            // Discord can expose upscale buttons before a visible 100% message.
+                            await emitStep('RENDERING', 1, 'rendering', 'Rendering complete', 'percent', {
+                                render_percent: 100,
+                                inferred_from_buttons: true
+                            });
+                            await emitProgress('RENDERING', 1, 'rendering', 'Rendering 100%', 'percent', {
+                                render_percent: 100,
+                                inferred_from_buttons: true
+                            });
+                            renderGateReached = true;
+                        }
+
+                        await emitStep('UPSCALE', 1, 'upscale', 'Postprocessing started', 'buttons_detected', {
+                            buttons_expected: 4
                         });
-                        await updateJobState('Triggering upscale buttons', Math.max(lastProgress, 95));
+                        await updateJobState('Upscaling in progress', 100);
                         let allButtonsSucceeded = true;
-                        for (let index = 0; index < buttonTexts.length; index++) {
-                            const text = buttonTexts[index];
+                        for (let index = 0; index < upscaleButtons.length; index++) {
+                            const text = upscaleButtons[index];
                             const buttonSelector = Selector(`#${message.id}`).find('button').withText(text);
                             if (await buttonSelector.exists) {
                                 await appendOverlayLog(`Prompt #${prompt.id}: triggering ${text}.`, 'info');
                                 await t.wait(300);
                                 await t.click(buttonSelector);
                                 buttonsTriggered++;
+                                await emitProgress(
+                                    'UPSCALE',
+                                    buttonsTriggered / 4,
+                                    'upscale',
+                                    `Upscale ${text}`,
+                                    'button_click',
+                                    {
+                                        button: text,
+                                        buttons_triggered: buttonsTriggered,
+                                        buttons_expected: 4,
+                                        button_result: 'clicked'
+                                    }
+                                );
                                 await log(`Clicked button: ${text}`);
                                 const activated = await waitForButtonActivation(buttonSelector, text);
                                 if (!activated) {
@@ -300,7 +334,7 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
                                     await reporter.emitError({
                                         workerKey,
                                         stepKey: 'UPSCALE',
-                                        progress: 0,
+                                        progress: buttonsTriggered / 4,
                                         message: `Upscale button ${text} did not activate`,
                                         phase: 'upscale',
                                         substep: 'activation_timeout',
@@ -313,7 +347,9 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
                                             prompt_title: promptLabel,
                                             prompt_hash: promptHash,
                                             source: promptSource,
-                                            button: text
+                                            button: text,
+                                            buttons_triggered: buttonsTriggered,
+                                            buttons_expected: 4
                                         }
                                     });
                                     await appendOverlayLog(
@@ -330,7 +366,7 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
                                 await reporter.emitError({
                                     workerKey,
                                     stepKey: 'UPSCALE',
-                                    progress: 0,
+                                    progress: buttonsTriggered / 4,
                                     message: `Upscale button ${text} not found`,
                                     phase: 'upscale',
                                     substep: 'button_missing',
@@ -343,7 +379,9 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
                                         prompt_title: promptLabel,
                                         prompt_hash: promptHash,
                                         source: promptSource,
-                                        button: text
+                                        button: text,
+                                        buttons_triggered: buttonsTriggered,
+                                        buttons_expected: 4
                                     }
                                 });
                                 await appendOverlayLog(
@@ -351,7 +389,7 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
                                     'warn'
                                 );
                             }
-                            if (index < buttonTexts.length - 1) {
+                            if (index < upscaleButtons.length - 1) {
                                 await t.wait(buttonCooldownMs);
                             }
                         }
@@ -377,7 +415,7 @@ export async function executePrompt(t: TestController, prompt: Prompt, context: 
                             {
                                 duration_seconds: Math.round((Date.now() - startedAtMs) / 1000),
                                 warnings_count: warningCount,
-                                buttons_expected: buttonTexts.length,
+                                buttons_expected: 4,
                                 buttons_triggered: buttonsTriggered,
                                 buttons_failed: buttonsFailed,
                                 failed_buttons: failedButtons

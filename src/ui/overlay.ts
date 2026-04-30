@@ -803,14 +803,21 @@ export const appendOverlayLog = ClientFunction((message: string, tone: string = 
     }
 });
 
-export const createJobOverlay = ClientFunction((promptId: string, promptText: string) => {
+export const createJobOverlay = ClientFunction((promptId: string, promptText: string, overlayKey?: string) => {
     const jobsContainer = document.getElementById('jobs-container');
     if (!jobsContainer) {
         return;
     }
 
+    const key = overlayKey || promptId;
+
+    const existingOverlay = document.getElementById(`job-overlay-${key}`);
+    if (existingOverlay) {
+        existingOverlay.remove();
+    }
+
     const overlay = document.createElement('div');
-    overlay.id = `job-overlay-${promptId}`;
+    overlay.id = `job-overlay-${key}`;
     overlay.className = 'job-overlay';
     overlay.setAttribute('data-state', 'pending');
 
@@ -819,23 +826,23 @@ export const createJobOverlay = ClientFunction((promptId: string, promptText: st
     overlay.innerHTML = `
         <h4>
             <span>Prompt ${promptId}</span>
-            <span id="job-progress-percent-${promptId}" class="job-progress-percent">0%</span>
+            <span id="job-progress-percent-${key}" class="job-progress-percent">0%</span>
         </h4>
         <p class="prompt-text">${trimmedPrompt}</p>
-        <p id="job-status-${promptId}" class="status-text" data-value="">Status: Started</p>
+        <p id="job-status-${key}" class="status-text" data-value="">Status: Started</p>
         <div class="progress-bar progress-bar--mini">
-            <div id="job-progress-${promptId}" class="progress-fill" style="width: 0%" data-value="0"></div>
+            <div id="job-progress-${key}" class="progress-fill" style="width: 0%" data-value="0"></div>
         </div>
     `;
 
     jobsContainer.insertAdjacentElement('afterbegin', overlay);
 });
 
-export const updateJobOverlay = ClientFunction((promptId: string, status: string, progress: number) => {
-    const jobStatus = document.getElementById(`job-status-${promptId}`);
-    const jobProgress = document.getElementById(`job-progress-${promptId}`);
-    const jobProgressPercent = document.getElementById(`job-progress-percent-${promptId}`);
-    const overlay = document.getElementById(`job-overlay-${promptId}`);
+export const updateJobOverlay = ClientFunction((overlayKey: string, status: string, progress: number) => {
+    const jobStatus = document.getElementById(`job-status-${overlayKey}`);
+    const jobProgress = document.getElementById(`job-progress-${overlayKey}`);
+    const jobProgressPercent = document.getElementById(`job-progress-percent-${overlayKey}`);
+    const overlay = document.getElementById(`job-overlay-${overlayKey}`);
 
     const normalized = Math.max(0, Math.min(progress, 100));
 
@@ -867,8 +874,8 @@ export const updateJobOverlay = ClientFunction((promptId: string, status: string
     }
 });
 
-export const removeJobOverlay = ClientFunction((promptId: string) => {
-    const overlay = document.getElementById(`job-overlay-${promptId}`);
+export const removeJobOverlay = ClientFunction((overlayKey: string) => {
+    const overlay = document.getElementById(`job-overlay-${overlayKey}`);
     if (overlay) {
         overlay.classList.add('is-fading');
         setTimeout(() => overlay.remove(), 320);

@@ -12,10 +12,11 @@ export type NeuroVaultStepKey =
     | 'FAILED';
 
 interface NeuroVaultEventPayload {
+    contract_version: 'nv-events-v1';
     sequence: number;
     job_id: string;
     phase: string;
-    substep?: string;
+    substep: string;
     attempt?: number;
     [key: string]: unknown;
 }
@@ -122,7 +123,6 @@ class ActiveNeuroVaultReporter implements NeuroVaultReporter {
 
         await this.enqueueEvent('ERROR', {
             ...input,
-            progress: 0,
             payload
         });
     }
@@ -188,10 +188,11 @@ class ActiveNeuroVaultReporter implements NeuroVaultReporter {
                 message: input.message,
                 ts: new Date().toISOString(),
                 payload: {
+                    contract_version: 'nv-events-v1',
                     sequence,
                     job_id: input.jobId ?? `${input.workerKey}:system`,
                     phase: input.phase,
-                    ...(input.substep ? { substep: input.substep } : {}),
+                    substep: input.substep ?? 'unspecified',
                     ...(typeof input.attempt === 'number' ? { attempt: input.attempt } : {}),
                     ...(input.payload ?? {})
                 }
